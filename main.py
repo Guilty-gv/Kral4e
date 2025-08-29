@@ -24,8 +24,8 @@ MAX_OHLCV = 200
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
 
-TELEGRAM_TOKEN = "8412947879:AAF6qsjmhxCaPsveNhkWR1qljljLnisLmPk"
-CHAT_ID = "7773587161"
+TELEGRAM_TOKEN = "TVOJ_TOKEN"
+CHAT_ID = "TVOJ_ID"
 bot = Bot(token=TELEGRAM_TOKEN)
 
 CSV_FILE = "crypto_signals_log.csv"
