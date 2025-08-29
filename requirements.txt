@@ -1,0 +1,10 @@
+aiohttp
+pandas
+numpy
+ta
+scikit-learn
+xgboost
+lightgbm
+tensorflow
+python-telegram-bot
+matplotlib
