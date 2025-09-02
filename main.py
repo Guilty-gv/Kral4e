@@ -2,6 +2,7 @@
 """
 Crypto Swing Trading + XGBoost Analyzer + Telegram Notifier
 Optimized for GitHub Actions
+Debug-enabled version
 """
 
 import aiohttp, pandas as pd, ta, asyncio, numpy as np, os
@@ -24,8 +25,9 @@ BINANCE_URL = "https://api.binance.com/api/v3/klines"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
 
 # ================= TELEGRAM =================
-bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+bot = Bot(token=TELEGRAM_TOKEN)
 
 def send_telegram(msg: str):
     """Сигурно испраќа порака и логира грешки."""
@@ -168,9 +170,13 @@ def log_to_csv(symbol, interval, price, final_signal, indicator_signals):
 async def analyze_coin(symbol):
     interval_msgs = {}
     global last_price_sent
+    print(f"DEBUG: Analyzing {symbol}")  # debug
+
     for tf in TIMEFRAMES:
         df = await fetch_data(symbol, tf)
-        if df.empty: continue
+        if df.empty: 
+            print(f"DEBUG: {symbol} {tf} - no data")
+            continue
         df = add_indicators(df)
 
         indicator_signals = generate_signal(df.iloc[-1])
@@ -179,7 +185,10 @@ async def analyze_coin(symbol):
 
         price = df['close'].iloc[-1]
         key = (symbol, tf)
+        print(f"DEBUG: {symbol} {tf} - last_price_sent: {last_price_sent.get(key)} | current price: {price}")
+
         if key in last_price_sent and abs(price-last_price_sent[key])/last_price_sent[key]<PRICE_CHANGE_THRESHOLD:
+            print(f"DEBUG: {symbol} {tf} - change < threshold ({PRICE_CHANGE_THRESHOLD*100}%), skipping message")
             continue
         last_price_sent[key]=price
         interval_msgs[tf] = final_signal
@@ -190,7 +199,8 @@ async def analyze_coin(symbol):
         msg_lines=[f"⏰ {now_str()}", f"📊 {symbol} Signals:"]
         for k,v in interval_msgs.items(): msg_lines.append(f"{k} → {v}")
         msg = "\n".join(msg_lines)
-        send_telegram(msg)  # Синхронно, сигурно
+        print(f"DEBUG: Sending Telegram message:\n{msg}")
+        send_telegram(msg)
 
 # ================= MAIN =================
 async def main():
