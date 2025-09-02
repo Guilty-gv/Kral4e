@@ -24,10 +24,10 @@ BINANCE_URL = "https://api.binance.com/api/v3/klines"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
 
 # ================= TELEGRAM =================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 CHAT_ID = os.getenv("CHAT_ID")
-bot = Bot(token=TELEGRAM_TOKEN)
 
+bot.send_message(CHAT_ID, "Test message")
 # ================= LOGGING =================
 CSV_FILE = "crypto_signals_log.csv"
 last_price_sent = {}
