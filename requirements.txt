@@ -1,11 +1,6 @@
 aiohttp
-requests
 pandas
 numpy
-ta
-scikit-learn
-xgboost
-lightgbm
-tensorflow
 python-telegram-bot
-matplotlib
+ta
+xgboost
