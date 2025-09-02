@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Crypto Swing Trading + XGBoost Analyzer + Telegram Notifier
-Optimized for Replit free plan
+Optimized for GitHub Actions
 Includes daily and weekly Telegram reports with trend graphs
 """
 
@@ -24,11 +24,12 @@ MAX_OHLCV = 200
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
 
-import os
+# ================= TELEGRAM =================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=TELEGRAM_TOKEN)
 
+# ================= LOGGING =================
 CSV_FILE = "crypto_signals_log.csv"
 last_price_sent = {}
 last_daily_report = None
@@ -51,7 +52,9 @@ async def fetch_binance(symbol, interval="1h"):
                 df["open_time"]=pd.to_datetime(df["open_time"], unit="ms")
                 df["close_time"]=pd.to_datetime(df["close_time"], unit="ms")
                 return df
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"Error in fetch_binance({symbol}): {e}")
+        return pd.DataFrame()
 
 async def fetch_coingecko(symbol_id, interval="hourly"):
     try:
@@ -66,7 +69,9 @@ async def fetch_coingecko(symbol_id, interval="hourly"):
                 df["timestamp"]=pd.to_datetime(df["timestamp"],unit="ms")
                 df["open"]=df["close"]; df["high"]=df["close"]; df["low"]=df["close"]; df["volume"]=0
                 return df
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"Error in fetch_coingecko({symbol_id}): {e}")
+        return pd.DataFrame()
 
 async def fetch_data(symbol, interval="1h"):
     if symbol in BINANCE_PAIRS: return await fetch_binance(symbol, interval)
@@ -117,8 +122,7 @@ def generate_signal(row):
     
     if 'VolumeSpike' in row and row['VolumeSpike']: signals.append("BUY")
 
-    return [s for s in signals if s]  # отстрани празни редови
-
+    return [s for s in signals if s]
 
 # ================= XGBoost ML =================
 async def run_ml(df):
@@ -135,7 +139,8 @@ async def run_ml(df):
             model.fit(X,y)
             pred=int(model.predict(X.iloc[-1:].values)[0])
             signals.append("BUY" if pred==1 else "SELL")
-    except: pass
+    except Exception as e:
+        print(f"Error in run_ml: {e}")
     return signals
 
 # ================= MAJORITY VOTE =================
@@ -179,6 +184,7 @@ async def daily_report():
         counts = summary.loc[sym]
         msg_lines.append(f"{sym}: BUY={counts.get('BUY',0)} SELL={counts.get('SELL',0)} HOLD={counts.get('HOLD',0)}")
     msg = "\n".join(msg_lines)
+    print("Sending daily report...")
     await asyncio.get_running_loop().run_in_executor(None, bot.send_message, CHAT_ID, msg)
     last_daily_report = today
 
@@ -186,7 +192,7 @@ async def daily_report():
 async def weekly_report():
     global last_weekly_report
     today = datetime.now().date()
-    week_start = today - timedelta(days=today.weekday())  # Monday
+    week_start = today - timedelta(days=today.weekday())
     if last_weekly_report == week_start: return
     if not os.path.exists(CSV_FILE): return
 
@@ -197,14 +203,13 @@ async def weekly_report():
     if df_week.empty: return
 
     summary = df_week.groupby(['date','symbol'])['signal'].value_counts().unstack(fill_value=0)
-    # Plot graph
     for sym in summary.index.get_level_values(1).unique():
         sym_df = summary.xs(sym, level=1)
         sym_df.plot(kind='line', title=f"Weekly Signal Trend: {sym}", figsize=(8,4))
         plt.ylabel("Count")
         plt.savefig(f"{sym}_weekly.png")
         plt.close()
-        # send image
+        print(f"Sending weekly report image for {sym}...")
         await asyncio.get_running_loop().run_in_executor(None, bot.send_photo, CHAT_ID, open(f"{sym}_weekly.png","rb"))
     last_weekly_report = week_start
 
@@ -228,25 +233,25 @@ async def analyze_coin(symbol):
         last_price_sent[key]=price
         interval_msgs[tf] = final_signal
 
-        # Log to CSV
         log_to_csv(symbol, tf, price, final_signal, indicator_signals)
 
     if interval_msgs:
         msg_lines=[f"⏰ {now_str()}", f"📊 {symbol} Signals:"]
         for k,v in interval_msgs.items(): msg_lines.append(f"{k} → {v}")
         msg = "\n".join(msg_lines)
+        print(f"Sending signals for {symbol}...")
         await asyncio.get_running_loop().run_in_executor(None, bot.send_message, CHAT_ID, msg)
 
-# ================= MAIN LOOP =================
-async def main_loop():
-    while True:
-        tasks=[analyze_coin(sym) for sym in BINANCE_PAIRS+list(COINGECKO_PAIRS.keys())]
-        await asyncio.gather(*tasks)
-        # daily and weekly report
-        await daily_report()
-        await weekly_report()
-        await asyncio.sleep(60*5)
+# ================= MAIN =================
+async def main():
+    # Анализа за сите парови
+    tasks = [analyze_coin(sym) for sym in BINANCE_PAIRS + list(COINGECKO_PAIRS.keys())]
+    await asyncio.gather(*tasks)
+
+    # Дневен и неделен извештај
+    await daily_report()
+    await weekly_report()
 
 if __name__=="__main__":
-    print(f"{now_str()} ▶ Starting Crypto Signal Bot with Indicators + XGBoost + CSV Logging + Daily/Weekly Report")
-    asyncio.run(main_loop())
+    print(f"{now_str()} ▶ Starting Crypto Signal Bot")
+    asyncio.run(main())
