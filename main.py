@@ -1,3 +1,4 @@
+# main.py
 # -*- coding: utf-8 -*-
 """
 Crypto Swing Trading + XGBoost Analyzer + Telegram Notifier
@@ -27,7 +28,6 @@ COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 CHAT_ID = os.getenv("CHAT_ID")
 
-bot.send_message(CHAT_ID, "Test message")
 # ================= LOGGING =================
 CSV_FILE = "crypto_signals_log.csv"
 last_price_sent = {}
@@ -101,24 +101,17 @@ def generate_signal(row):
     if row.empty: return ["HOLD"]
     signals = []
     p = row['close']
-
     signals.append("BUY" if row['EMA20'] > row['EMA50'] else "SELL" if row['EMA20'] < row['EMA50'] else "")
-    
     if 'Tenkan' in row and 'Kijun' in row:
         signals.append("BUY" if p > max(row['Tenkan'], row['Kijun']) else "SELL")
-    
     signals.append("BUY" if row['RSI'] < 30 else "SELL" if row['RSI'] > 70 else "")
     signals.append("BUY" if row['%K'] > row['%D'] else "SELL")
     signals.append("BUY" if row['MACD'] > row['MACD_signal'] else "SELL")
-    
     if p < row['BB_lower']: signals.append("BUY")
     elif p > row['BB_upper']: signals.append("SELL")
-    
     for f in ['Fib_0.236','Fib_0.382','Fib_0.5','Fib_0.618']:
         if abs(p - row[f]) / p < 0.01: signals.append("BUY" if p < row[f] else "SELL")
-    
     if 'VolumeSpike' in row and row['VolumeSpike']: signals.append("BUY")
-
     return [s for s in signals if s]
 
 # ================= XGBoost ML =================
@@ -183,16 +176,16 @@ async def analyze_coin(symbol):
 
         log_to_csv(symbol, tf, price, final_signal, indicator_signals)
 
+    # ====== Синхронно праќање порака ======
     if interval_msgs:
         msg_lines=[f"⏰ {now_str()}", f"📊 {symbol} Signals:"]
         for k,v in interval_msgs.items(): msg_lines.append(f"{k} → {v}")
         msg = "\n".join(msg_lines)
         print(f"Sending signals for {symbol}...")
-        await asyncio.get_running_loop().run_in_executor(None, bot.send_message, CHAT_ID, msg)
+        bot.send_message(CHAT_ID, msg)  # без async, директно
 
 # ================= MAIN =================
 async def main():
-    # Анализа за сите парови
     tasks = [analyze_coin(sym) for sym in BINANCE_PAIRS + list(COINGECKO_PAIRS.keys())]
     await asyncio.gather(*tasks)
 
