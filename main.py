@@ -1,4 +1,3 @@
-# main.py
 # -*- coding: utf-8 -*-
 """
 Crypto Swing Trading + XGBoost Analyzer + Telegram Notifier
@@ -28,13 +27,24 @@ COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 CHAT_ID = os.getenv("CHAT_ID")
 
+def send_telegram(msg: str):
+    """Сигурно испраќа порака и логира грешки."""
+    try:
+        bot.send_message(CHAT_ID, msg)
+        print("Telegram message sent!")
+        print(msg)
+    except Exception as e:
+        print("Telegram send error:", e)
+        print(msg)
+
 # ================= LOGGING =================
 CSV_FILE = "crypto_signals_log.csv"
 last_price_sent = {}
 
-# ================= HELPERS =================
-def now_str(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def now_str(): 
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+# ================= HELPERS =================
 async def fetch_binance(symbol, interval="1h"):
     try:
         params = {"symbol":symbol,"interval":interval,"limit":MAX_OHLCV}
@@ -176,13 +186,11 @@ async def analyze_coin(symbol):
 
         log_to_csv(symbol, tf, price, final_signal, indicator_signals)
 
-    # ====== Синхронно праќање порака ======
     if interval_msgs:
         msg_lines=[f"⏰ {now_str()}", f"📊 {symbol} Signals:"]
         for k,v in interval_msgs.items(): msg_lines.append(f"{k} → {v}")
         msg = "\n".join(msg_lines)
-        print(f"Sending signals for {symbol}...")
-        bot.send_message(CHAT_ID, msg)  # без async, директно
+        send_telegram(msg)  # Синхронно, сигурно
 
 # ================= MAIN =================
 async def main():
