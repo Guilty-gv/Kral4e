@@ -2,12 +2,11 @@
 """
 Crypto Swing Trading + XGBoost Analyzer + Telegram Notifier
 Optimized for GitHub Actions
-Includes daily and weekly Telegram reports with trend graphs
 """
 
-import aiohttp, pandas as pd, ta, asyncio, numpy as np, os, matplotlib.pyplot as plt
+import aiohttp, pandas as pd, ta, asyncio, numpy as np, os
 from telegram import Bot
-from datetime import datetime, timedelta
+from datetime import datetime
 import xgboost as xgb
 
 # ================= CONFIG =================
@@ -32,8 +31,6 @@ bot = Bot(token=TELEGRAM_TOKEN)
 # ================= LOGGING =================
 CSV_FILE = "crypto_signals_log.csv"
 last_price_sent = {}
-last_daily_report = None
-last_weekly_report = None
 
 # ================= HELPERS =================
 def now_str(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -164,55 +161,6 @@ def log_to_csv(symbol, interval, price, final_signal, indicator_signals):
     df_row = pd.DataFrame([entry])
     df_row.to_csv(CSV_FILE, mode="a", index=False, header=not os.path.exists(CSV_FILE))
 
-# ================= DAILY REPORT =================
-async def daily_report():
-    global last_daily_report
-    today = datetime.now().date()
-    if last_daily_report == today: return
-    if not os.path.exists(CSV_FILE): return
-
-    df = pd.read_csv(CSV_FILE)
-    df['timestamp']=pd.to_datetime(df['timestamp'])
-    df['date']=df['timestamp'].dt.date
-    df_today = df[df['date']==today]
-
-    if df_today.empty: return
-
-    summary = df_today.groupby('symbol')['signal'].value_counts().unstack(fill_value=0)
-    msg_lines = [f"📅 Дневен извештај за {today}"]
-    for sym in summary.index:
-        counts = summary.loc[sym]
-        msg_lines.append(f"{sym}: BUY={counts.get('BUY',0)} SELL={counts.get('SELL',0)} HOLD={counts.get('HOLD',0)}")
-    msg = "\n".join(msg_lines)
-    print("Sending daily report...")
-    await asyncio.get_running_loop().run_in_executor(None, bot.send_message, CHAT_ID, msg)
-    last_daily_report = today
-
-# ================= WEEKLY REPORT =================
-async def weekly_report():
-    global last_weekly_report
-    today = datetime.now().date()
-    week_start = today - timedelta(days=today.weekday())
-    if last_weekly_report == week_start: return
-    if not os.path.exists(CSV_FILE): return
-
-    df = pd.read_csv(CSV_FILE)
-    df['timestamp']=pd.to_datetime(df['timestamp'])
-    df['date']=df['timestamp'].dt.date
-    df_week = df[df['date']>=week_start]
-    if df_week.empty: return
-
-    summary = df_week.groupby(['date','symbol'])['signal'].value_counts().unstack(fill_value=0)
-    for sym in summary.index.get_level_values(1).unique():
-        sym_df = summary.xs(sym, level=1)
-        sym_df.plot(kind='line', title=f"Weekly Signal Trend: {sym}", figsize=(8,4))
-        plt.ylabel("Count")
-        plt.savefig(f"{sym}_weekly.png")
-        plt.close()
-        print(f"Sending weekly report image for {sym}...")
-        await asyncio.get_running_loop().run_in_executor(None, bot.send_photo, CHAT_ID, open(f"{sym}_weekly.png","rb"))
-    last_weekly_report = week_start
-
 # ================= ANALYSIS =================
 async def analyze_coin(symbol):
     interval_msgs = {}
@@ -247,10 +195,6 @@ async def main():
     # Анализа за сите парови
     tasks = [analyze_coin(sym) for sym in BINANCE_PAIRS + list(COINGECKO_PAIRS.keys())]
     await asyncio.gather(*tasks)
-
-    # Дневен и неделен извештај
-    await daily_report()
-    await weekly_report()
 
 if __name__=="__main__":
     print(f"{now_str()} ▶ Starting Crypto Signal Bot")
