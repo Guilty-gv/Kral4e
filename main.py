@@ -10,29 +10,28 @@ from datetime import datetime
 import xgboost as xgb
 
 # ================= CONFIG =================
-BINANCE_PAIRS = [
-    "BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT",
+BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT",
     "WUSDT","ACHUSDT","ALGOUSDT","AVAXUSDT",
-    "FETUSDT","IOTAUSDT","AXLUSDT","HBARUSDT"
-]
+    "FETUSDT","IOTAUSDT","AXLUSDT","HBARUSDT"]
 COINGECKO_PAIRS = {"KASUSDT":"kas-network"}
 TIMEFRAMES = ["1d","4h","1h","15m"]
-PRICE_CHANGE_THRESHOLD = 0.01  # 5% change
-MAX_OHLCV = 200
+
+# EMA комбинации по timeframe
+EMA_MAP = {
+    "15m": (9, 20),
+    "1h": (20, 50),
+    "4h": (50, 200),
+    "1d": (100, 200)
+}
+
 RSI_PERIOD = 14
 STOCH_PERIOD = 14
 ATR_PERIOD = 14
+PRICE_CHANGE_THRESHOLD = 0.00  # Испраќа само ако промена ≥ 5%
+MAX_OHLCV = 200
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
-
-# ================= EMA COMBINATIONS =================
-EMA_COMBINATIONS = {
-    "15m": [9, 21],
-    "1h": [12, 26],
-    "4h": [20, 50],
-    "1d": [50, 200]
-}
 
 # ================= TELEGRAM =================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -98,16 +97,18 @@ async def fetch_data(symbol, interval="1h"):
     return pd.DataFrame()
 
 # ================= INDICATORS =================
-def add_indicators(df, timeframe):
+def add_indicators(df, interval):
     if df.empty: return df
-    ema_periods = EMA_COMBINATIONS.get(timeframe, [20,50])
-    for p in ema_periods: df[f"EMA{p}"] = df['close'].ewm(span=p, adjust=False).mean()
-    
+    # додади сите EMA од EMA_MAP
+    for ema_set in EMA_MAP.values():
+        for p in ema_set:
+            if f"EMA{p}" not in df.columns:
+                df[f"EMA{p}"] = df['close'].ewm(span=p, adjust=False).mean()
+
     try:
         df['Tenkan'] = (df['high'].rolling(9).max() + df['low'].rolling(9).min())/2
         df['Kijun'] = (df['high'].rolling(26).max() + df['low'].rolling(26).min())/2
     except: pass
-    
     df['RSI'] = ta.momentum.RSIIndicator(df['close'], RSI_PERIOD).rsi()
     stoch = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close'], STOCH_PERIOD)
     df['%K'] = stoch.stoch(); df['%D'] = stoch.stoch_signal()
@@ -115,67 +116,40 @@ def add_indicators(df, timeframe):
     bb = ta.volatility.BollingerBands(df['close']); df['BB_upper'] = bb.bollinger_hband(); df['BB_lower'] = bb.bollinger_lband()
     df['ATR'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], ATR_PERIOD).average_true_range()
     df['OBV'] = ta.volume.OnBalanceVolumeIndicator(df['close'], df['volume']).on_balance_volume()
-    
-    high = df['close'].max(); low = df['close'].min(); diff = high-low
-    df['Fib_0.236']=high-0.236*diff; df['Fib_0.382']=high-0.382*diff; df['Fib_0.5']=high-0.5*diff; df['Fib_0.618']=high-0.618*diff
-    
-    vol_ema = df['volume'].ewm(span=20,adjust=False).mean()
-    df['VolumeSpike'] = df['volume'] >= 2*vol_ema
     return df
 
 # ================= SIGNAL & ML =================
-def generate_signal(row, timeframe):
+def generate_signal(row, interval):
     if row.empty: return ["HOLD"]
     signals = []
-    ema_periods = EMA_COMBINATIONS.get(timeframe, [20,50])
-    short_ema, long_ema = ema_periods[0], ema_periods[1]
-    
-    # EMA crossover
-    if row[f"EMA{short_ema}"] > row[f"EMA{long_ema}"]:
-        signals.append("BUY")
-    elif row[f"EMA{short_ema}"] < row[f"EMA{long_ema}"]:
-        signals.append("SELL")
-    
-    # Tenkan/Kijun
     p = row['close']
+
+    # EMA логика според timeframe
+    short_ema, long_ema = EMA_MAP.get(interval, (20, 50))
+    if f"EMA{short_ema}" in row and f"EMA{long_ema}" in row:
+        if row[f"EMA{short_ema}"] > row[f"EMA{long_ema}"]:
+            signals.append("BUY")
+        elif row[f"EMA{short_ema}"] < row[f"EMA{long_ema}"]:
+            signals.append("SELL")
+
+    # Ichimoku
     if 'Tenkan' in row and 'Kijun' in row:
         signals.append("BUY" if p > max(row['Tenkan'], row['Kijun']) else "SELL")
+
+    # RSI
     signals.append("BUY" if row['RSI'] < 30 else "SELL" if row['RSI'] > 70 else "")
+
+    # Stochastic
     signals.append("BUY" if row['%K'] > row['%D'] else "SELL")
+
+    # MACD
     signals.append("BUY" if row['MACD'] > row['MACD_signal'] else "SELL")
+
+    # Bollinger
     if p < row['BB_lower']: signals.append("BUY")
     elif p > row['BB_upper']: signals.append("SELL")
-    for f in ['Fib_0.236','Fib_0.382','Fib_0.5','Fib_0.618']:
-        if abs(p - row[f])/p < 0.01: signals.append("BUY" if p < row[f] else "SELL")
-    if 'VolumeSpike' in row and row['VolumeSpike']: signals.append("BUY")
-    
+
     return [s for s in signals if s]
-
-async def run_ml(df):
-    signals=[]
-    try:
-        feats=pd.DataFrame(index=df.index)
-        for p in EMA_COMBINATIONS.get("1h",[20,50]): 
-            feats[f"EMA{p}"]=df['close'].ewm(span=p,adjust=False).mean()
-        feats["RSI"]=ta.momentum.RSIIndicator(df['close'],RSI_PERIOD).rsi()
-        feats.dropna(inplace=True)
-        if len(feats)>=50:
-            y=(df['close'].shift(-1).loc[feats.index]>df['close'].loc[feats.index]).astype(int)
-            X=feats
-            model=xgb.XGBClassifier(n_estimators=25,max_depth=3,use_label_encoder=False,eval_metric='logloss')
-            model.fit(X,y)
-            pred=int(model.predict(X.iloc[-1:].values)[0])
-            signals.append("BUY" if pred==1 else "SELL")
-    except Exception as e:
-        print(f"Error in run_ml: {e}")
-    return signals
-
-def combine_signals(indicator_signals, ml_signals):
-    votes = indicator_signals.copy(); votes.extend(ml_signals)
-    buy = votes.count("BUY"); sell = votes.count("SELL")
-    if buy>sell: return "BUY"
-    elif sell>buy: return "SELL"
-    else: return "HOLD"
 
 # ================= LOG =================
 CSV_FILE = "crypto_signals_log.csv"
@@ -197,16 +171,16 @@ async def analyze_coin(symbol):
     global last_price_sent
     for tf in TIMEFRAMES:
         df = await fetch_data(symbol, tf)
-        if df.empty: continue
+        if df.empty:
+            continue
         df = add_indicators(df, tf)
         indicator_signals = generate_signal(df.iloc[-1], tf)
-        ml_signal = await run_ml(df)
-        final_signal = combine_signals(indicator_signals, ml_signal)
         price = df['close'].iloc[-1]
         key = (symbol, tf)
         if key in last_price_sent and abs(price-last_price_sent[key])/last_price_sent[key]<PRICE_CHANGE_THRESHOLD:
             continue
         last_price_sent[key]=price
+        final_signal = " / ".join(indicator_signals) if indicator_signals else "HOLD"
         interval_msgs[tf] = final_signal
         log_to_csv(symbol, tf, price, final_signal, indicator_signals)
     if interval_msgs:
