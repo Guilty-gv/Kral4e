@@ -23,7 +23,7 @@ BINANCE_PAIRS = [BINANCE_PAIRS = [
     "AXLUSDT",
     "HBARUSDT",
     "WUSDT"  # Wormhole (W) на Binance
-]
+]]
 COINGECKO_PAIRS = {"KASUSDT":"kas-network"}
 TIMEFRAMES = ["1d","4h","1h","15m"]
 
