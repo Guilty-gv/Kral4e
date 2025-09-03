@@ -10,14 +10,14 @@ from datetime import datetime
 import xgboost as xgb
 
 # ================= CONFIG =================
-BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT"]
+BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT","WUSDT","ACHUSDT","ALGOUSDT","AVAXUSDT","FETUSDT","IOTAUSDT","AXLUSDT","HBARUSDT"]
 COINGECKO_PAIRS = {"KASUSDT":"kas-network"}
 TIMEFRAMES = ["1d","4h","1h","15m"]
 EMA_PERIODS = [20,50]
 RSI_PERIOD = 14
 STOCH_PERIOD = 14
 ATR_PERIOD = 14
-PRICE_CHANGE_THRESHOLD = 0.05  # Испраќа само ако промена ≥ 5%
+PRICE_CHANGE_THRESHOLD = 0.01  # Испраќа само ако промена ≥ 5%
 MAX_OHLCV = 200
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
