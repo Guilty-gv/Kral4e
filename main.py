@@ -2,7 +2,6 @@
 """
 Crypto Swing Trading + XGBoost Analyzer + Telegram Notifier
 Optimized for GitHub Actions
-Debug-enabled version
 """
 
 import aiohttp, pandas as pd, ta, asyncio, numpy as np, os
@@ -18,7 +17,7 @@ EMA_PERIODS = [20,50]
 RSI_PERIOD = 14
 STOCH_PERIOD = 14
 ATR_PERIOD = 14
-PRICE_CHANGE_THRESHOLD = 0.00
+PRICE_CHANGE_THRESHOLD = 0.0  # За тест, испрати порака секогаш
 MAX_OHLCV = 200
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
@@ -29,6 +28,11 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=TELEGRAM_TOKEN)
 
+last_price_sent = {}
+
+def now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 def send_telegram(msg: str):
     """Сигурно испраќа порака и логира грешки."""
     try:
@@ -38,13 +42,6 @@ def send_telegram(msg: str):
     except Exception as e:
         print("Telegram send error:", e)
         print(msg)
-
-# ================= LOGGING =================
-CSV_FILE = "crypto_signals_log.csv"
-last_price_sent = {}
-
-def now_str(): 
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 # ================= HELPERS =================
 async def fetch_binance(symbol, interval="1h"):
@@ -164,18 +161,16 @@ def log_to_csv(symbol, interval, price, final_signal, indicator_signals):
         "indicator_signals": ",".join(indicator_signals)
     }
     df_row = pd.DataFrame([entry])
-    df_row.to_csv(CSV_FILE, mode="a", index=False, header=not os.path.exists(CSV_FILE))
+    df_row.to_csv("crypto_signals_log.csv", mode="a", index=False, header=not os.path.exists("crypto_signals_log.csv"))
 
 # ================= ANALYSIS =================
 async def analyze_coin(symbol):
     interval_msgs = {}
     global last_price_sent
-    print(f"DEBUG: Analyzing {symbol}")  # debug
-
     for tf in TIMEFRAMES:
         df = await fetch_data(symbol, tf)
-        if df.empty: 
-            print(f"DEBUG: {symbol} {tf} - no data")
+        if df.empty:
+            send_telegram(f"DEBUG: {symbol} {tf} - нема податоци")
             continue
         df = add_indicators(df)
 
@@ -185,12 +180,11 @@ async def analyze_coin(symbol):
 
         price = df['close'].iloc[-1]
         key = (symbol, tf)
-        print(f"DEBUG: {symbol} {tf} - last_price_sent: {last_price_sent.get(key)} | current price: {price}")
-
         if key in last_price_sent and abs(price-last_price_sent[key])/last_price_sent[key]<PRICE_CHANGE_THRESHOLD:
-            print(f"DEBUG: {symbol} {tf} - change < threshold ({PRICE_CHANGE_THRESHOLD*100}%), skipping message")
+            send_telegram(f"DEBUG: {symbol} {tf} - промена < {PRICE_CHANGE_THRESHOLD*100}% → skip")
             continue
-        last_price_sent[key]=price
+
+        last_price_sent[key] = price
         interval_msgs[tf] = final_signal
 
         log_to_csv(symbol, tf, price, final_signal, indicator_signals)
@@ -199,8 +193,9 @@ async def analyze_coin(symbol):
         msg_lines=[f"⏰ {now_str()}", f"📊 {symbol} Signals:"]
         for k,v in interval_msgs.items(): msg_lines.append(f"{k} → {v}")
         msg = "\n".join(msg_lines)
-        print(f"DEBUG: Sending Telegram message:\n{msg}")
         send_telegram(msg)
+    else:
+        send_telegram(f"DEBUG: {symbol} - нема сигнали за праќање")
 
 # ================= MAIN =================
 async def main():
@@ -209,8 +204,5 @@ async def main():
 
 if __name__=="__main__":
     print(f"{now_str()} ▶ Starting Crypto Signal Bot")
+    send_telegram(f"DEBUG: Bot started at {now_str()} - CHAT_ID={CHAT_ID}")  # тест порака
     asyncio.run(main())
-
-    # DEBUG TEST MESSAGE
-    send_telegram(f"DEBUG: Bot started at {now_str()} - CHAT_ID={CHAT_ID}")
-
