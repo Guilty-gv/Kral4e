@@ -8,6 +8,7 @@ import aiohttp, pandas as pd, ta, asyncio, numpy as np, os
 from telegram import Bot
 from datetime import datetime
 import xgboost as xgb
+import time
 
 # ================= CONFIG =================
 BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT"]
@@ -27,14 +28,12 @@ COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=TELEGRAM_TOKEN)
-
 last_price_sent = {}
 
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def send_telegram(msg: str):
-    """Сигурно испраќа порака и логира грешки."""
     try:
         bot.send_message(CHAT_ID, msg)
         print("Telegram message sent!")
@@ -45,39 +44,45 @@ def send_telegram(msg: str):
 
 # ================= HELPERS =================
 async def fetch_binance(symbol, interval="1h"):
-    try:
-        params = {"symbol":symbol,"interval":interval,"limit":MAX_OHLCV}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(BINANCE_URL, params=params, timeout=20) as resp:
-                data = await resp.json()
-                if not isinstance(data,list) or len(data)==0: return pd.DataFrame()
-                df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume",
-                                                 "close_time","quote_asset_volume","num_trades",
-                                                 "taker_buy_base","taker_buy_quote","ignore"])
-                for c in ["open","high","low","close","volume"]: df[c]=df[c].astype(float)
-                df["open_time"]=pd.to_datetime(df["open_time"], unit="ms")
-                df["close_time"]=pd.to_datetime(df["close_time"], unit="ms")
-                return df
-    except Exception as e:
-        print(f"Error in fetch_binance({symbol}): {e}")
-        return pd.DataFrame()
+    params = {"symbol":symbol,"interval":interval,"limit":MAX_OHLCV}
+    async with aiohttp.ClientSession() as session:
+        for attempt in range(3):
+            try:
+                async with session.get(BINANCE_URL, params=params, timeout=30) as resp:
+                    data = await resp.json()
+                    print(f"DEBUG: raw Binance data for {symbol} {interval} (attempt {attempt+1}): {data[:3]}")
+                    if isinstance(data,list) and len(data)>0:
+                        df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume",
+                                                        "close_time","quote_asset_volume","num_trades",
+                                                        "taker_buy_base","taker_buy_quote","ignore"])
+                        for c in ["open","high","low","close","volume"]: df[c]=df[c].astype(float)
+                        df["open_time"]=pd.to_datetime(df["open_time"], unit="ms")
+                        df["close_time"]=pd.to_datetime(df["close_time"], unit="ms")
+                        return df
+            except Exception as e:
+                print(f"Attempt {attempt+1} failed for {symbol}: {e}")
+                await asyncio.sleep(2)
+    return pd.DataFrame()
 
 async def fetch_coingecko(symbol_id, interval="hourly"):
-    try:
-        url = COINGECKO_URL.format(id=symbol_id)
-        params = {"vs_currency":"usd","days":30,"interval":interval}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=20) as resp:
-                data = await resp.json()
-                prices = data.get("prices", [])
-                if len(prices)==0: return pd.DataFrame()
-                df = pd.DataFrame(prices, columns=["timestamp","close"])
-                df["timestamp"]=pd.to_datetime(df["timestamp"],unit="ms")
-                df["open"]=df["close"]; df["high"]=df["close"]; df["low"]=df["close"]; df["volume"]=0
-                return df
-    except Exception as e:
-        print(f"Error in fetch_coingecko({symbol_id}): {e}")
-        return pd.DataFrame()
+    url = COINGECKO_URL.format(id=symbol_id)
+    params = {"vs_currency":"usd","days":30,"interval":interval}
+    async with aiohttp.ClientSession() as session:
+        for attempt in range(3):
+            try:
+                async with session.get(url, params=params, timeout=30) as resp:
+                    data = await resp.json()
+                    prices = data.get("prices", [])
+                    print(f"DEBUG: raw Coingecko data for {symbol_id} {interval} (attempt {attempt+1}): {prices[:3]}")
+                    if len(prices) > 0:
+                        df = pd.DataFrame(prices, columns=["timestamp","close"])
+                        df["timestamp"]=pd.to_datetime(df["timestamp"],unit="ms")
+                        df["open"]=df["close"]; df["high"]=df["close"]; df["low"]=df["close"]; df["volume"]=0
+                        return df
+            except Exception as e:
+                print(f"Attempt {attempt+1} failed for {symbol_id}: {e}")
+                await asyncio.sleep(2)
+    return pd.DataFrame()
 
 async def fetch_data(symbol, interval="1h"):
     if symbol in BINANCE_PAIRS: return await fetch_binance(symbol, interval)
@@ -170,25 +175,20 @@ async def analyze_coin(symbol):
     for tf in TIMEFRAMES:
         df = await fetch_data(symbol, tf)
         if df.empty:
-            send_telegram(f"DEBUG: {symbol} {tf} - нема податоци")
+            print(f"DEBUG: {symbol} {tf} - нема податоци")
             continue
         df = add_indicators(df)
-
         indicator_signals = generate_signal(df.iloc[-1])
         ml_signal = await run_ml(df)
         final_signal = combine_signals(indicator_signals, ml_signal)
-
         price = df['close'].iloc[-1]
         key = (symbol, tf)
         if key in last_price_sent and abs(price-last_price_sent[key])/last_price_sent[key]<PRICE_CHANGE_THRESHOLD:
-            send_telegram(f"DEBUG: {symbol} {tf} - промена < {PRICE_CHANGE_THRESHOLD*100}% → skip")
+            print(f"DEBUG: {symbol} {tf} - change < threshold ({PRICE_CHANGE_THRESHOLD*100}%), skipping message")
             continue
-
-        last_price_sent[key] = price
+        last_price_sent[key]=price
         interval_msgs[tf] = final_signal
-
         log_to_csv(symbol, tf, price, final_signal, indicator_signals)
-
     if interval_msgs:
         msg_lines=[f"⏰ {now_str()}", f"📊 {symbol} Signals:"]
         for k,v in interval_msgs.items(): msg_lines.append(f"{k} → {v}")
@@ -199,10 +199,10 @@ async def analyze_coin(symbol):
 
 # ================= MAIN =================
 async def main():
+    send_telegram(f"DEBUG: Bot started at {now_str()} - CHAT_ID={CHAT_ID}")  # тест порака на старт
     tasks = [analyze_coin(sym) for sym in BINANCE_PAIRS + list(COINGECKO_PAIRS.keys())]
     await asyncio.gather(*tasks)
 
 if __name__=="__main__":
     print(f"{now_str()} ▶ Starting Crypto Signal Bot")
-    send_telegram(f"DEBUG: Bot started at {now_str()} - CHAT_ID={CHAT_ID}")  # тест порака
     asyncio.run(main())
