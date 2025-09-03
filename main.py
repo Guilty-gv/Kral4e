@@ -8,7 +8,6 @@ import aiohttp, pandas as pd, ta, asyncio, numpy as np, os
 from telegram import Bot
 from datetime import datetime
 import xgboost as xgb
-import time
 
 # ================= CONFIG =================
 BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT"]
@@ -18,7 +17,7 @@ EMA_PERIODS = [20,50]
 RSI_PERIOD = 14
 STOCH_PERIOD = 14
 ATR_PERIOD = 14
-PRICE_CHANGE_THRESHOLD = 0.0  # За тест, испрати порака секогаш
+PRICE_CHANGE_THRESHOLD = 0.01  # Испраќа само ако промена ≥ 5%
 MAX_OHLCV = 200
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
@@ -37,10 +36,8 @@ def send_telegram(msg: str):
     try:
         bot.send_message(CHAT_ID, msg)
         print("Telegram message sent!")
-        print(msg)
     except Exception as e:
         print("Telegram send error:", e)
-        print(msg)
 
 # ================= HELPERS =================
 async def fetch_binance(symbol, interval="1h"):
@@ -50,7 +47,6 @@ async def fetch_binance(symbol, interval="1h"):
             try:
                 async with session.get(BINANCE_URL, params=params, timeout=30) as resp:
                     data = await resp.json()
-                    print(f"DEBUG: raw Binance data for {symbol} {interval} (attempt {attempt+1}): {data[:3]}")
                     if isinstance(data,list) and len(data)>0:
                         df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume",
                                                         "close_time","quote_asset_volume","num_trades",
@@ -62,6 +58,7 @@ async def fetch_binance(symbol, interval="1h"):
             except Exception as e:
                 print(f"Attempt {attempt+1} failed for {symbol}: {e}")
                 await asyncio.sleep(2)
+    print(f"DEBUG: {symbol} {interval} - нема податоци")
     return pd.DataFrame()
 
 async def fetch_coingecko(symbol_id, interval="hourly"):
@@ -73,7 +70,6 @@ async def fetch_coingecko(symbol_id, interval="hourly"):
                 async with session.get(url, params=params, timeout=30) as resp:
                     data = await resp.json()
                     prices = data.get("prices", [])
-                    print(f"DEBUG: raw Coingecko data for {symbol_id} {interval} (attempt {attempt+1}): {prices[:3]}")
                     if len(prices) > 0:
                         df = pd.DataFrame(prices, columns=["timestamp","close"])
                         df["timestamp"]=pd.to_datetime(df["timestamp"],unit="ms")
@@ -82,6 +78,7 @@ async def fetch_coingecko(symbol_id, interval="hourly"):
             except Exception as e:
                 print(f"Attempt {attempt+1} failed for {symbol_id}: {e}")
                 await asyncio.sleep(2)
+    print(f"DEBUG: {symbol_id} {interval} - нема податоци")
     return pd.DataFrame()
 
 async def fetch_data(symbol, interval="1h"):
@@ -110,7 +107,7 @@ def add_indicators(df):
     df['VolumeSpike'] = df['volume'] >= 2*vol_ema
     return df
 
-# ================= SIGNAL =================
+# ================= SIGNAL & ML =================
 def generate_signal(row):
     if row.empty: return ["HOLD"]
     signals = []
@@ -128,7 +125,6 @@ def generate_signal(row):
     if 'VolumeSpike' in row and row['VolumeSpike']: signals.append("BUY")
     return [s for s in signals if s]
 
-# ================= XGBoost ML =================
 async def run_ml(df):
     signals=[]
     try:
@@ -147,7 +143,6 @@ async def run_ml(df):
         print(f"Error in run_ml: {e}")
     return signals
 
-# ================= MAJORITY VOTE =================
 def combine_signals(indicator_signals, ml_signals):
     votes = indicator_signals.copy(); votes.extend(ml_signals)
     buy = votes.count("BUY"); sell = votes.count("SELL")
@@ -155,7 +150,8 @@ def combine_signals(indicator_signals, ml_signals):
     elif sell>buy: return "SELL"
     else: return "HOLD"
 
-# ================= LOG TO CSV =================
+# ================= LOG =================
+CSV_FILE = "crypto_signals_log.csv"
 def log_to_csv(symbol, interval, price, final_signal, indicator_signals):
     entry = {
         "timestamp": now_str(),
@@ -166,7 +162,7 @@ def log_to_csv(symbol, interval, price, final_signal, indicator_signals):
         "indicator_signals": ",".join(indicator_signals)
     }
     df_row = pd.DataFrame([entry])
-    df_row.to_csv("crypto_signals_log.csv", mode="a", index=False, header=not os.path.exists("crypto_signals_log.csv"))
+    df_row.to_csv(CSV_FILE, mode="a", index=False, header=not os.path.exists(CSV_FILE))
 
 # ================= ANALYSIS =================
 async def analyze_coin(symbol):
@@ -175,7 +171,6 @@ async def analyze_coin(symbol):
     for tf in TIMEFRAMES:
         df = await fetch_data(symbol, tf)
         if df.empty:
-            print(f"DEBUG: {symbol} {tf} - нема податоци")
             continue
         df = add_indicators(df)
         indicator_signals = generate_signal(df.iloc[-1])
@@ -184,7 +179,6 @@ async def analyze_coin(symbol):
         price = df['close'].iloc[-1]
         key = (symbol, tf)
         if key in last_price_sent and abs(price-last_price_sent[key])/last_price_sent[key]<PRICE_CHANGE_THRESHOLD:
-            print(f"DEBUG: {symbol} {tf} - change < threshold ({PRICE_CHANGE_THRESHOLD*100}%), skipping message")
             continue
         last_price_sent[key]=price
         interval_msgs[tf] = final_signal
@@ -194,12 +188,9 @@ async def analyze_coin(symbol):
         for k,v in interval_msgs.items(): msg_lines.append(f"{k} → {v}")
         msg = "\n".join(msg_lines)
         send_telegram(msg)
-    else:
-        send_telegram(f"DEBUG: {symbol} - нема сигнали за праќање")
 
 # ================= MAIN =================
 async def main():
-    send_telegram(f"DEBUG: Bot started at {now_str()} - CHAT_ID={CHAT_ID}")  # тест порака на старт
     tasks = [analyze_coin(sym) for sym in BINANCE_PAIRS + list(COINGECKO_PAIRS.keys())]
     await asyncio.gather(*tasks)
 
