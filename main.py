@@ -10,7 +10,7 @@ from datetime import datetime
 import xgboost as xgb
 
 # ================= CONFIG =================
-BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT"]
+BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT","IOTAUSDT","ALGOUSDT","AVAXUSDT","WUSDT","ACHUSDT","AXLUSDT","FETUSDT","HBARUSDT"]
 COINGECKO_PAIRS = {"KASUSDT":"kas-network"}
 TIMEFRAMES = ["1d","4h","1h","15m"]
 EMA_PERIODS = [20,50]
