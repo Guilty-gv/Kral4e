@@ -210,3 +210,7 @@ async def main():
 if __name__=="__main__":
     print(f"{now_str()} ▶ Starting Crypto Signal Bot")
     asyncio.run(main())
+
+    # DEBUG TEST MESSAGE
+    send_telegram(f"DEBUG: Bot started at {now_str()} - CHAT_ID={CHAT_ID}")
+
