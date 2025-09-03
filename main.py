@@ -40,7 +40,7 @@ EMA_MAP = {
 RSI_PERIOD = 14
 STOCH_PERIOD = 14
 ATR_PERIOD = 14
-PRICE_CHANGE_THRESHOLD = 0.05  # праќа само ако промена ≥ 5%
+PRICE_CHANGE_THRESHOLD = 0.00  # праќа само ако промена ≥ 5%
 MAX_OHLCV = 200
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
