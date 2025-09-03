@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Crypto Swing Trading + XGBoost Analyzer + Telegram Notifier
-GitHub Actions debug верзија
+Optimized for GitHub Actions
 """
 
 import aiohttp, pandas as pd, ta, asyncio, numpy as np, os
@@ -10,15 +10,14 @@ from datetime import datetime
 import xgboost as xgb
 
 # ================= CONFIG =================
-BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT","WORMUSDT",
-                 "ALGOUSDT","AVAXUSDT","FETUSDT","IOTAUSDT","AXLUSDT","HBARUSDT","ACHUSDT"]
+BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT"]
 COINGECKO_PAIRS = {"KASUSDT":"kas-network"}
 TIMEFRAMES = ["1d","4h","1h","15m"]
 EMA_PERIODS = [20,50]
 RSI_PERIOD = 14
 STOCH_PERIOD = 14
 ATR_PERIOD = 14
-PRICE_CHANGE_THRESHOLD = 0.05
+PRICE_CHANGE_THRESHOLD = 0.05  # Испраќа само ако промена ≥ 5%
 MAX_OHLCV = 200
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
@@ -47,8 +46,6 @@ async def fetch_binance(symbol, interval="1h"):
         for attempt in range(3):
             try:
                 async with session.get(BINANCE_URL, params=params, timeout=30) as resp:
-                    text = await resp.text()
-                    print(f"DEBUG RAW Binance {symbol} {interval} attempt {attempt+1}: {text[:200]}")
                     data = await resp.json()
                     if isinstance(data,list) and len(data)>0:
                         df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume",
@@ -60,20 +57,17 @@ async def fetch_binance(symbol, interval="1h"):
                         return df
             except Exception as e:
                 print(f"Attempt {attempt+1} failed for {symbol}: {e}")
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
     print(f"DEBUG: {symbol} {interval} - нема податоци")
     return pd.DataFrame()
 
 async def fetch_coingecko(symbol_id, interval="hourly"):
     url = COINGECKO_URL.format(id=symbol_id)
     params = {"vs_currency":"usd","days":30,"interval":interval}
-    headers = {"User-Agent":"Mozilla/5.0"}
     async with aiohttp.ClientSession() as session:
         for attempt in range(3):
             try:
-                async with session.get(url, params=params, headers=headers, timeout=30) as resp:
-                    text = await resp.text()
-                    print(f"DEBUG RAW Coingecko {symbol_id} {interval} attempt {attempt+1}: {text[:200]}")
+                async with session.get(url, params=params, timeout=30) as resp:
                     data = await resp.json()
                     prices = data.get("prices", [])
                     if len(prices) > 0:
@@ -83,7 +77,7 @@ async def fetch_coingecko(symbol_id, interval="hourly"):
                         return df
             except Exception as e:
                 print(f"Attempt {attempt+1} failed for {symbol_id}: {e}")
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
     print(f"DEBUG: {symbol_id} {interval} - нема податоци")
     return pd.DataFrame()
 
