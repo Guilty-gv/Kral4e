@@ -10,9 +10,20 @@ from datetime import datetime
 import xgboost as xgb
 
 # ================= CONFIG =================
-BINANCE_PAIRS = ["BTCUSDT","XRPUSDT","LINKUSDT","ONDOUSDT",
-    "WUSDT","ACHUSDT","ALGOUSDT","AVAXUSDT",
-    "FETUSDT","IOTAUSDT","AXLUSDT","HBARUSDT"]
+BINANCE_PAIRS = [BINANCE_PAIRS = [
+    "BTCUSDT",
+    "XRPUSDT",
+    "LINKUSDT",
+    "ONDOUSDT",
+    "ACHUSDT",
+    "ALGOUSDT",
+    "AVAXUSDT",
+    "FETUSDT",
+    "IOTAUSDT",
+    "AXLUSDT",
+    "HBARUSDT",
+    "WUSDT"  # Wormhole (W) на Binance
+]
 COINGECKO_PAIRS = {"KASUSDT":"kas-network"}
 TIMEFRAMES = ["1d","4h","1h","15m"]
 
