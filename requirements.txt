@@ -4,4 +4,4 @@ numpy
 python-telegram-bot==13.15
 ta
 xgboost
-python-kucoin
+kucoin-python
