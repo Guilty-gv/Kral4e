@@ -20,7 +20,7 @@ EMA_PERIODS = [20,50]
 RSI_PERIOD = 14
 STOCH_PERIOD = 14
 ATR_PERIOD = 14
-PRICE_CHANGE_THRESHOLD = 0.05  # Испраќа само ако промена ≥ 5%
+PRICE_CHANGE_THRESHOLD = 0.01  # Испраќа само ако промена ≥ 5%
 MAX_OHLCV = 200
 
 market_client = Market()
