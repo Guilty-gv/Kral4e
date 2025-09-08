@@ -296,22 +296,45 @@ def format_message(symbol, tf, price, final, buy, sell, buy_p, sell_p):
 
 # ================ ANALYZE TASK ================
 async def analyze_symbol(symbol: str, tf: str, session: aiohttp.ClientSession):
-    key=(symbol,tf); now=datetime.utcnow()
-    if key in last_sent_time and now-last_sent_time[key]<timedelta(minutes=COOLDOWN_MINUTES): pass
-    df=await fetch_kucoin_candles(symbol, tf, MAX_OHLCV, session)
-    if df.empty: return
-    if df["close"].iloc[-1]*df["volume"].iloc[-1]<MIN_VOLUME_USDT: return
-    df=add_indicators(df).dropna().reset_index(drop=True)
-    votes=indicator_votes(df)
-    final,buy,sell=combine_votes(votes)
+    key = (symbol, tf)
+    now = datetime.utcnow()
+
+    # cooldown check
+    if key in last_sent_time and now - last_sent_time[key] < timedelta(minutes=COOLDOWN_MINUTES):
+        return
+
+    df = await fetch_kucoin_candles(symbol, tf, MAX_OHLCV, session)
+    if df.empty:
+        return
+
+    # liquidity check
+    if df["close"].iloc[-1] * df["volume"].iloc[-1] < MIN_VOLUME_USDT:
+        return
+
+    df = add_indicators(df).dropna().reset_index(drop=True)
+    votes = indicator_votes(df)
+    final, buy, sell = combine_votes(votes)
     buy_p, sell_p = suggested_prices(df, final)
-    last_price= df["close"].iloc[-1]
-    if key in last_price_sent and abs(last_price-last_price_sent[key])/max(last_price_sent[key],1e-9)<PRICE_CHANGE_THRESHOLD: return
-    last_price_sent[key]=last_price; last_sent_time[key]=now
+    last_price = df["close"].iloc[-1]
+
+    # price change threshold
+    if key in last_price_sent and abs(last_price - last_price_sent[key]) / max(last_price_sent[key], 1e-9) < PRICE_CHANGE_THRESHOLD:
+        return
+
+    # update state
+    last_price_sent[key] = last_price
+    last_sent_time[key] = now
+
+    # log
     log_to_csv(symbol, tf, last_price, final, votes, buy, sell)
-    msg=format_message(symbol, tf, last_price, final, buy, sell, buy_p, sell_p)
+    msg = format_message(symbol, tf, last_price, final, buy, sell, buy_p, sell_p)
+
+    # debug
+    logger.info(f"DEBUG: Trying to send Telegram for {symbol} {tf} at price {last_price}")
     send_telegram(msg)
+
     logger.info("Analyzed %s %s -> %s (buy:%d sell:%d)", symbol, tf, final, buy, sell)
+
 
 # ================ MAIN ================
 async def main():
