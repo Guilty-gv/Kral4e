@@ -1,14 +1,14 @@
 name: Test Telegram
 
 on:
-  workflow_dispatch:  # стартуваш рачно од GitHub Actions
+  workflow_dispatch:  # Рачно стартување
 
 jobs:
   test-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -17,9 +17,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install python-telegram-bot==20.3
+        run: pip install -r requirements.txt
 
-      - name: Run test script
+      - name: Test Telegram
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
