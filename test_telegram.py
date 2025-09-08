@@ -1,18 +1,34 @@
-# test_telegram.py
 import os
+import logging
 from telegram import Bot
 
-bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-print("=== DEBUG: START TEST ===")
-print("TELEGRAM_TOKEN found:", bool(os.getenv("TELEGRAM_TOKEN")))
-print("CHAT_ID found:", CHAT_ID)
+logger = logging.getLogger("test_bot")
+logging.basicConfig(level=logging.INFO)
 
-try:
-    bot.send_message(CHAT_ID, "✅ Test message from GitHub Actions!")
-    print("Telegram message successfully sent!")
-except Exception as e:
-    print("Telegram send error:", e)
+# Иницијализација на Bot
+bot = None
+if TELEGRAM_TOKEN and CHAT_ID:
+    try:
+        bot = Bot(token=TELEGRAM_TOKEN)
+        logger.info("Telegram Bot initialized successfully.")
+    except Exception as e:
+        bot = None
+        logger.error("Telegram init failed: %s", e)
+else:
+    logger.warning("Telegram token or chat_id missing!")
 
-print("=== DEBUG: END TEST ===")
+def send_telegram(msg: str):
+    if not bot:
+        logger.warning("Bot not initialized, skipping send.")
+        return
+    try:
+        bot.send_message(chat_id=CHAT_ID, text=msg)
+        logger.info("Telegram message sent: %s", msg)
+    except Exception as e:
+        logger.error("Failed to send Telegram message: %s", e)
+
+# Тест порака
+send_telegram("✅ Test message from GitHub workflow!")
