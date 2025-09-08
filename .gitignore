@@ -2,34 +2,34 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
 
-# Virtual environments
+# Virtual environment
 venv/
-.env/
-.env.*
+env/
+.venv/
 
-# Jupyter / IPython
+# Jupyter
 .ipynb_checkpoints
 
-# Logs and CSV outputs
+# Logs
 *.log
 *.csv
 
-# Model files
+# Models
 .models/
 *.joblib
-*.pkl
-
-# System files
-.DS_Store
-Thumbs.db
 
 # IDEs
 .vscode/
 .idea/
-*.sublime-workspace
 *.sublime-project
+*.sublime-workspace
 
-# Byte-compiled / temp files
-*.tmp
-*.swp
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
