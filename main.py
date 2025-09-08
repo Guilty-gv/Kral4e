@@ -244,9 +244,13 @@ def suggested_prices(df,vote):
     levels=[df.get(f,[]).iloc[-1] for f in ["Fib_0.382","Fib_0.5","Fib_0.618"] if f in df.columns]
     for p in detect_harmonics(df):
     try:
-    levels.append(float(p.split("@")[-1]))
-except:
-    pass
+    levels = []
+for p in harmonics:
+    try:
+        levels.append(float(p.split("@")[-1]))
+    except:
+        pass
+
 
     if vote=="BUY" and levels: buy_price=min([l for l in levels if l>=last]+[buy_price])
     if vote=="SELL" and levels: sell_price=max([l for l in levels if l<=last]+[sell_price])
