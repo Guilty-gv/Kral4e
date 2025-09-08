@@ -173,9 +173,17 @@ def atomic_save_model(model, path):
                 pass
 
 def load_model_safe(path):
-    if not os.path.exists(path): return None
-    try: lock = FileLock(MODEL_LOCKPATH, timeout=30); with lock: return load(path)
-    except Exception as e: logger.error("Failed to load model: %s", e); return None
+    if not os.path.exists(path):
+        return None
+    lock = FileLock(MODEL_LOCKPATH, timeout=30)
+    try:
+        with lock:
+            model = load(path)
+            return model
+    except Exception as e:
+        logger.error("Failed to load model safely: %s", e)
+        return None
+
 
 def train_and_persist_model(df):
     feats = build_features(df)
