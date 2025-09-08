@@ -6,7 +6,5 @@ ta>=0.11.0
 xgboost>=3.0.5
 kucoin-python==1.0.26
 scikit-learn>=1.2.2
-talib-binary>=0.4.0  # за TA-Lib функционалности (брза обработка на индикатори)
-filelock>=3.12.0     # за atomic save на моделите
-joblib>=1.2.0        # за persistence на ML моделите
-
+filelock>=3.12.0
+joblib>=1.2.0
