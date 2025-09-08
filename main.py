@@ -236,20 +236,46 @@ def indicator_votes(df: pd.DataFrame):
     return votes
 
 # ================ SUGGESTED PRICE ================
-def suggested_prices(df,vote):
-    last=df["close"].iloc[-1]
+def suggested_prices(df, vote):
+    last = df["close"].iloc[-1]
     # default ±1% if no Fib/Harmonics near
-    buy_price, sell_price=last*0.99,last*1.01
-    # dynamic Fib/Harmonics
-    levels=[df.get(f,[]).iloc[-1] for f in ["Fib_0.382","Fib_0.5","Fib_0.618"] if f in df.columns]
-    for p in detect_harmonics(df):
-    try:
+    buy_price, sell_price = last * 0.99, last * 1.01
+
+    # dynamic Fib levels
     levels = []
-for p in harmonics:
-    try:
-        levels.append(float(p.split("@")[-1]))
-    except:
-        pass
+    for f in ["Fib_0.382", "Fib_0.5", "Fib_0.618"]:
+        if f in df.columns:
+            try:
+                levels.append(float(df[f].iloc[-1]))
+            except Exception:
+                pass
+
+    # dynamic Harmonics levels
+    harmonics = detect_harmonics(df)
+    for h in harmonics:
+        try:
+            # assuming format "BUY@27500" or "SELL@28000"
+            levels.append(float(h.split("@")[-1]))
+        except Exception:
+            pass
+
+    if levels:
+        if vote == "BUY":
+            # nearest level below last price
+            below = [l for l in levels if l < last]
+            if below:
+                buy_price = max(below)
+            else:
+                buy_price = last * 0.995  # fallback
+        elif vote == "SELL":
+            # nearest level above last price
+            above = [l for l in levels if l > last]
+            if above:
+                sell_price = min(above)
+            else:
+                sell_price = last * 1.005  # fallback
+
+    return round(buy_price, 2), round(sell_price, 2)
 
 
     if vote=="BUY" and levels: buy_price=min([l for l in levels if l>=last]+[buy_price])
