@@ -1,5 +1,35 @@
-*.csv
-*.log
-*.model
+# Python
 __pycache__/
-.env
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env/
+.env.*
+
+# Jupyter / IPython
+.ipynb_checkpoints
+
+# Logs and CSV outputs
+*.log
+*.csv
+
+# Model files
+.models/
+*.joblib
+*.pkl
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Byte-compiled / temp files
+*.tmp
+*.swp
