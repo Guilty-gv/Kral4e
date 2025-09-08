@@ -34,7 +34,8 @@ except Exception:
 from telegram import Bot
 
 # ================ CONFIG ================
-KUCOIN_SYMBOLS = ["BTC-USDT","ETH-USDT","XRP-USDT","LINK-USDT"]
+KUCOIN_SYMBOLS = [ "BTCUSDT","XRPUSDT","LINKUSDT","ALGOUSDT","AVAXUSDT",
+    "FETUSDT","IOTAUSDT","HBARUSDT","ACHUSDT","WAXLUSDT","WUSDT","KASUSDT","ONDOUSDT","PEPEUSDT","PONKEUSDT"]
 TIMEFRAMES = ["1d","1w"]
 EMA_FAST = 50
 EMA_SLOW = 200
@@ -154,13 +155,22 @@ def train_ensemble(X, y):
     return ensemble
 
 def atomic_save_model(model, path):
-    tmp=None
-    try: lock = FileLock(MODEL_LOCKPATH, timeout=30)
-    with lock: 
-        with NamedTemporaryFile(dir=os.path.dirname(path), delete=False) as tf: dump(model, tf.name); tmp=tf.name
-        os.replace(tmp,path)
-    except Exception as e: logger.error("Failed to save model: %s", e); 
-    if tmp and os.path.exists(tmp): os.remove(tmp)
+   def atomic_save_model(model, path):
+    tmp = None
+    lock = FileLock(MODEL_LOCKPATH, timeout=30)
+    try:
+        with lock:
+            with NamedTemporaryFile(dir=os.path.dirname(path), delete=False) as tf:
+                dump(model, tf.name)
+                tmp = tf.name
+            os.replace(tmp, path)
+    except Exception as e:
+        logger.error("Failed to save model atomically: %s", e)
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
 
 def load_model_safe(path):
     if not os.path.exists(path): return None
