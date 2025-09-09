@@ -97,29 +97,46 @@ def kucoin_interval_map(tf: str):
             "4h":"4hour","1d":"1day","1w":"1week"}.get(tf,"1day")
 
 # ================ FETCH ================
-async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200, session: aiohttp.ClientSession = None):
-    params = {"symbol": symbol, "type": kucoin_interval_map(tf), "limit": str(min(limit, MAX_OHLCV))}
-    close_session = False
-    if session is None: session = aiohttp.ClientSession(); close_session = True
-    try:
-        for attempt in range(3):
-            try:
-                async with session.get(KUCOIN_CANDLES_URL, params=params, timeout=30) as resp:
-                    txt = await resp.text()
-                    if resp.status != 200: await asyncio.sleep(1 + attempt*2); continue
-                    data = await resp.json()
-                    if not data or 'data' not in data: await asyncio.sleep(1 + attempt*2); continue
-                    arr = data['data']
-                    df = pd.DataFrame(arr, columns=["timestamp","open","close","high","low","volume","turnover"])
-                    df = df.astype({"timestamp":"int64","open":"float","close":"float","high":"float","low":"float","volume":"float"})
-                    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-                    df = df.sort_values("timestamp").reset_index(drop=True)
-                    df = df[["timestamp","open","high","low","close","volume"]]
-                    return df
-            except Exception as e: logger.warning("Attempt %d failed for %s %s: %s", attempt+1, symbol, tf, e); await asyncio.sleep(1 + attempt*2)
+async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
+    """
+    Асинхрон fetch на KuCoin kline преку официјалниот Market client.
+    Поддржани timeframe: 1d, 1w
+    Враќа pandas DataFrame со колони: timestamp, open, high, low, close, volume
+    """
+    interval_map = {
+        "1d": "1day",
+        "1w": "1week"
+    }
+
+    if tf not in interval_map:
+        logger.warning("Unsupported timeframe %s for %s. Only 1d/1w supported.", tf, symbol)
         return pd.DataFrame()
-    finally:
-        if close_session: await session.close()
+
+    interval = interval_map[tf]
+    loop = asyncio.get_running_loop()
+
+    try:
+        # run_in_executor за да не блокира asyncio loop
+        candles = await loop.run_in_executor(
+            None, lambda: market_client.get_kline(symbol, interval, limit=limit)
+        )
+
+        if not candles:
+            logger.info("SKIP %s-%s: KuCoin returned empty response", symbol, tf)
+            return pd.DataFrame()
+
+        # KuCoin враќа: [time, open, close, high, low, volume, turnover]
+        df = pd.DataFrame(candles, columns=["timestamp","open","close","high","low","volume","turnover"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+        # враќаме само колоните што ни се потребни
+        return df[["timestamp","open","high","low","close","volume"]]
+
+    except Exception as e:
+        logger.error("Error fetching %s-%s candles: %s", symbol, tf, e)
+        return pd.DataFrame()
+
 
 # ================ INDICATORS ================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
