@@ -40,7 +40,7 @@ KUCOIN_SYMBOLS = [
     "FETUSDT","IOTAUSDT","HBARUSDT","ACHUSDT","WAXLUSDT",
     "WUSDT","KASUSDT","ONDOUSDT","PEPEUSDT","PONKEUSDT"
 ]
-TIMEFRAMES = ["1d","1w"]
+TIMEFRAMES = ["15min","1h","1d","1w"]
 EMA_FAST, EMA_SLOW = 50, 200
 RSI_PERIOD, STOCH_FASTK = 14, 14
 ATR_PERIOD, ADX_PERIOD, VWAP_PERIOD = 14, 14, 20
@@ -96,7 +96,7 @@ async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
     Поддржани: 1d, 1w. Враќа pd.DataFrame со колони timestamp, open, high, low, close, volume
     Retry 3 обиди
     """
-    interval_map = {"1d":"1day","1w":"1week"}
+    interval_map = {"15m": "15min","1h": "1hour","1d":"1day","1w":"1week"}
     if tf not in interval_map:
         logger.warning("Unsupported timeframe %s for %s", tf, symbol)
         return pd.DataFrame()
