@@ -289,4 +289,4 @@ def format_message(symbol, tf, price, final, buy, sell, buy_p, sell_p):
 async def analyze_symbol(symbol: str, tf: str, session: aiohttp.ClientSession=None):
     key=(symbol,tf); now=datetime.utcnow()
     df = await fetch_kucoin_candles(symbol, tf, MAX_OHLCV)
-    if df.empty: logger.info("SKIP %s-%s: DataFrame empty",
+    if df.empty: logger.info("SKIP %s-%s: DataFrame empty"),
