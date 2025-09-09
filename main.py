@@ -15,6 +15,7 @@ from tempfile import NamedTemporaryFile
 from joblib import dump, load
 from filelock import FileLock
 from harmonics import detect_harmonics
+from kucoin.client import Market
 
 # ML
 from sklearn.linear_model import LogisticRegression
@@ -49,7 +50,23 @@ PRICE_CHANGE_THRESHOLD = 0.01
 MIN_VOLUME_USDT = 1000
 COOLDOWN_MINUTES = 60
 
-KUCOIN_CANDLES_URL = "https://api.kucoin.com/api/v1/market/candles"
+
+# KuCoin API config (од env vars / GitHub Secrets)
+# =====================================
+KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
+KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
+KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
+
+# Ако API key не е поставен, ќе користи public mode
+if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
+    market_client = Market(
+        key=KUCOIN_API_KEY,
+        secret=KUCOIN_API_SECRET,
+        passphrase=KUCOIN_API_PASSPHRASE,
+        is_sandbox=False
+    )
+else:
+    market_client = Market()
 
 MODEL_DIR = ".models"; os.makedirs(MODEL_DIR, exist_ok=True)
 MODEL_PATH = os.path.join(MODEL_DIR, "ensemble.joblib")
