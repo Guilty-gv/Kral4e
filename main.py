@@ -98,9 +98,10 @@ async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
     """
     interval_map = {"15m": "15min","1h": "1hour","1d":"1day","1w":"1week"}
    
-    if tf not in interval_map:
+   if tf not in interval_map:
     logger.warning("Unsupported timeframe %s for %s. Supported: %s", tf, symbol, list(interval_map.keys()))
     return pd.DataFrame()
+
 
 
     interval = interval_map[tf]
