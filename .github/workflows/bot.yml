@@ -1,53 +1,37 @@
-name: Run Both Bots with Color Logging
+name: Hybrid Crypto Bot
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  run-bots:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          if [ -f requirements.txt ]; then
-            echo -e "\033[1;32mInstalling dependencies...\033[0m"
-            pip install -r requirements.txt
-          else
-            echo -e "\033[1;33mNo requirements.txt found, skipping dependency installation.\033[0m"
-          fi
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy python-telegram-bot==20.3 kucoin-python harmonics scikit-learn xgboost ta joblib filelock talib-binary
 
-      - name: Run main bot
-        run: |
-          echo -e "\033[1;34m===== Starting main bot =====\033[0m"
-          python main.py
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -eq 0 ]; then
-            echo -e "\033[1;32m===== Main bot finished successfully =====\033[0m"
-          else
-            echo -e "\033[1;31m===== Main bot failed with exit code $EXIT_CODE =====\033[0m"
-            exit $EXIT_CODE
-          fi
+    - name: Export environment variables
+      run: |
+        echo "KUCOIN_API_KEY=${{ secrets.KUCOIN_API_KEY }}" >> $GITHUB_ENV
+        echo "KUCOIN_API_SECRET=${{ secrets.KUCOIN_API_SECRET }}" >> $GITHUB_ENV
+        echo "KUCOIN_API_PASSPHRASE=${{ secrets.KUCOIN_API_PASSPHRASE }}" >> $GITHUB_ENV
+        echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
+        echo "CHAT_ID=${{ secrets.CHAT_ID }}" >> $GITHUB_ENV
 
-      - name: Run hybrid bot
-        run: |
-          echo -e "\033[1;34m===== Starting hybrid bot =====\033[0m"
-          python hybrid_bot_final.py
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -eq 0 ]; then
-            echo -e "\033[1;32m===== Hybrid bot finished successfully =====\033[0m"
-          else
-            echo -e "\033[1;31m===== Hybrid bot failed with exit code $EXIT_CODE =====\033[0m"
-            exit $EXIT_CODE
-          fi
+    - name: Start Bot
+      run: |
+        echo -e "\033[1;34m===== Starting main bot =====\033[0m"
+        python main.py
