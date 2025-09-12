@@ -80,11 +80,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("hybrid_bot")
 
 # ================ UTIL ================
-def now_str(): return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-def send_telegram(msg: str):
-    if not bot: return
-    try: bot.send_message(CHAT_ID, msg)
-    except Exception as e: logger.error("Telegram send error: %s", e)
+def now_str():
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+async def send_telegram(msg: str):
+    if not bot:
+        return
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        logger.error("Telegram send error: %s", e)
 
 # ================ FETCH ================
 async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
@@ -285,25 +290,41 @@ def format_message(symbol, tf, price, final, buy, sell, buy_p, sell_p, ml_conf):
 async def analyze_symbol(symbol: str, tf: str):
     key = (symbol, tf)
     now = datetime.utcnow()
+
+    # Проверка за cooldown
     if key in last_sent_time and now - last_sent_time[key] < timedelta(minutes=COOLDOWN_MINUTES):
         return
+
     df = await fetch_kucoin_candles(symbol, tf, MAX_OHLCV)
-    if df.empty: return
-    if df["close"].iloc[-1] * df["volume"].iloc[-1] < MIN_VOLUME_USDT: return
+    if df.empty: 
+        return
+    if df["close"].iloc[-1] * df["volume"].iloc[-1] < MIN_VOLUME_USDT: 
+        return
+
     df = add_indicators(df).dropna().reset_index(drop=True)
     votes, ml_conf = indicator_votes(df)
     final, buy, sell = combine_votes(votes, ml_conf)
     buy_p, sell_p = suggested_prices(df, final)
     last_price = df["close"].iloc[-1]
+
+    # Проверка за минимална промена на цена
     if key in last_price_sent and abs(last_price - last_price_sent[key]) / max(last_price_sent[key], 1e-9) < PRICE_CHANGE_THRESHOLD:
         return
     last_price_sent[key] = last_price
     last_sent_time[key] = now
+
+    # Логирање на CSV
     log_to_csv(symbol, tf, last_price, final, votes, buy, sell)
+
+    # Формирање на пораката
     msg = format_message(symbol, tf, last_price, final, buy, sell, buy_p, sell_p, ml_conf)
     logger.info(f"DEBUG: Sending Telegram for {symbol} {tf} at price {last_price}")
-    send_telegram(msg)
+
+    # Асинхроно испраќање порака
+    asyncio.create_task(send_telegram(msg))
+
     logger.info("Analyzed %s %s -> %s (buy:%d sell:%d)", symbol, tf, final, buy, sell)
+
 
 # ================ MAIN LOOP ================
 async def continuous_monitor():
