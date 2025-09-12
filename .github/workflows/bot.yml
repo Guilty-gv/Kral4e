@@ -1,13 +1,19 @@
-name: Bot
+name: Hybrid Crypto Bot
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"   # пуштање на секои 15 минути
-  workflow_dispatch:           # опција за рачно стартување
+  workflow_dispatch:  # можеш рачно да го стартуваш
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    env:
+      # KuCoin API credentials
+      KUCOIN_API_KEY: ${{ secrets.KUCOIN_API_KEY }}
+      KUCOIN_API_SECRET: ${{ secrets.KUCOIN_API_SECRET }}
+      KUCOIN_API_PASSPHRASE: ${{ secrets.KUCOIN_API_PASSPHRASE }}
+      # Telegram
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
 
     steps:
       - name: Checkout repo
@@ -16,25 +22,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-
-      - name: Cache pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run Bot with debug
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          set -e
-          echo "DEBUG: Starting Bot workflow"
-          python main.py
-          echo "DEBUG: Bot workflow finished"
+          python -m pip install --upgrade pip
+          pip install numpy pandas scikit-learn xgboost ta-lib ta joblib filelock python-telegram-bot harmonics aiohttp kucoin-python
+
+      - name: Run Hybrid Bot
+        run: python hybrid_bot_final.py
