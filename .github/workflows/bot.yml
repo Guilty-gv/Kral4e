@@ -31,23 +31,23 @@ jobs:
       - name: Run main bot
         run: |
           echo -e "\033[1;34m===== Starting main bot =====\033[0m"
-          python bot_main.py
-          BOT_MAIN_EXIT_CODE=$?
-          if [ $BOT_MAIN_EXIT_CODE -eq 0 ]; then
+          python main.py
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 0 ]; then
             echo -e "\033[1;32m===== Main bot finished successfully =====\033[0m"
           else
-            echo -e "\033[1;31m===== Main bot failed with exit code $BOT_MAIN_EXIT_CODE =====\033[0m"
-            exit $BOT_MAIN_EXIT_CODE
+            echo -e "\033[1;31m===== Main bot failed with exit code $EXIT_CODE =====\033[0m"
+            exit $EXIT_CODE
           fi
 
       - name: Run hybrid bot
         run: |
           echo -e "\033[1;34m===== Starting hybrid bot =====\033[0m"
           python hybrid_bot_final.py
-          HYBRID_EXIT_CODE=$?
-          if [ $HYBRID_EXIT_CODE -eq 0 ]; then
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 0 ]; then
             echo -e "\033[1;32m===== Hybrid bot finished successfully =====\033[0m"
           else
-            echo -e "\033[1;31m===== Hybrid bot failed with exit code $HYBRID_EXIT_CODE =====\033[0m"
-            exit $HYBRID_EXIT_CODE
+            echo -e "\033[1;31m===== Hybrid bot failed with exit code $EXIT_CODE =====\033[0m"
+            exit $EXIT_CODE
           fi
