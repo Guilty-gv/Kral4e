@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Hybrid Long-Term Crypto Bot - CONTINUOUS VERSION
-- Only selected tokens
+Hybrid Long-Term Crypto Bot - CONSOLOIDATED VERSION
+- Selected tokens
 - KuCoin public API (async)
 - Indicators + ML ensemble
-- Telegram alerts with confidence
+- Telegram alerts with priority Fib/Harmonic levels
 - Continuous monitoring of new candles
 """
 
@@ -20,7 +20,6 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
 
-# TA
 try:
     import talib
     TALIB_AVAILABLE = True
@@ -28,7 +27,6 @@ except Exception:
     import ta
     TALIB_AVAILABLE = False
 
-# Telegram
 from telegram import Bot
 
 # ================ CONFIG ================
@@ -48,20 +46,12 @@ COOLDOWN_MINUTES = 60
 TOKENS = ["BTC","XRP","LINK","ONDO","AVAX","W","ACH","PEPE","PONKE","ICP",
           "FET","ALGO","HBAR","KAS","PYTH","IOTA","WAXL","ETH","ADA"]
 
-# Ако сакаш можеш да зададеш различна стратегија по токен
-TOKEN_STRATEGY = {t:"conservative" for t in TOKENS}  # "conservative" или "aggressive"
-
-# KuCoin API config
 KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
 KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
 KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
 
 if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
-    market_client = Market(
-        key=KUCOIN_API_KEY,
-        secret=KUCOIN_API_SECRET,
-        passphrase=KUCOIN_API_PASSPHRASE
-    )
+    market_client = Market(key=KUCOIN_API_KEY, secret=KUCOIN_API_SECRET, passphrase=KUCOIN_API_PASSPHRASE)
 else:
     market_client = Market()
 
@@ -74,11 +64,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN and CHAT_ID else None
 
-# State
 last_price_sent = {}
 last_sent_time = {}
 
-# Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("hybrid_bot")
 
@@ -87,37 +75,28 @@ def now_str():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 async def send_telegram(msg: str):
-    if not bot:
-        return
+    if not bot: return
     try:
         await bot.send_message(chat_id=CHAT_ID, text=msg)
     except Exception as e:
         logger.error("Telegram send error: %s", e)
 
 def smart_round(value: float) -> float:
-    """Dynamic rounding според цената на токенот."""
-    if value >= 1:
-        return round(value, 2)   # за BTC, ETH итн.
-    elif value >= 0.01:
-        return round(value, 4)   # за midcap токени
-    else:
-        return round(value, 8)   # за микро-токени како PEPE, SHIB
+    if value >= 1: return round(value, 2)
+    elif value >= 0.01: return round(value, 4)
+    else: return round(value, 8)
 
-# ================ FETCH ================
+# ================ FETCH CANDLES ================
 async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
     interval_map = {"1d":"1day","1w":"1week"}
-    if tf not in interval_map:
-        logger.warning("Unsupported timeframe %s for %s", tf, symbol)
-        return pd.DataFrame()
+    if tf not in interval_map: return pd.DataFrame()
     interval = interval_map[tf]
     loop = asyncio.get_running_loop()
     try:
         candles = await loop.run_in_executor(
             None, lambda: market_client.get_kline(symbol, interval, limit=limit)
         )
-        if not candles:
-            logger.info("SKIP %s-%s: Empty response", symbol, tf)
-            return pd.DataFrame()
+        if not candles: return pd.DataFrame()
         df = pd.DataFrame(candles, columns=["timestamp","open","close","high","low","volume","turnover"])
         for col in ["open","close","high","low","volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -138,125 +117,38 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["EMA_fast"], df["EMA_slow"] = talib.EMA(close, EMA_FAST), talib.EMA(close, EMA_SLOW)
         df["RSI"] = talib.RSI(close, RSI_PERIOD)
         stoch_k, stoch_d = talib.STOCH(high, low, close, STOCH_FASTK, 3,3); df["%K"], df["%D"] = stoch_k, stoch_d
-        macd, macdsignal, macdhist = talib.MACD(close); df["MACD"], df["MACD_signal"], df["MACD_hist"] = macd, macdsignal, macdhist
-        upper, middle, lower = talib.BBANDS(close, 20); df["BB_upper"], df["BB_middle"], df["BB_lower"] = upper, middle, lower; df["BB_bw"] = (upper-lower)/(df["close"]+1e-9)
         tr = talib.TRANGE(high, low, close); df["ATR"] = pd.Series(tr).rolling(ATR_PERIOD).mean().values
-        df["OBV"] = talib.OBV(close, vol)
-        df["ADX"] = talib.ADX(high, low, close, ADX_PERIOD); df["+DI"] = talib.PLUS_DI(high, low, close, ADX_PERIOD); df["-DI"] = talib.MINUS_DI(high, low, close, ADX_PERIOD)
     else:
         df["EMA_fast"], df["EMA_slow"] = df["close"].ewm(span=EMA_FAST).mean(), df["close"].ewm(span=EMA_SLOW).mean()
         df["RSI"] = ta.momentum.RSIIndicator(df["close"], RSI_PERIOD).rsi()
-        st = ta.momentum.StochasticOscillator(df["high"], df["low"], df["close"], STOCH_FASTK); df["%K"], df["%D"] = st.stoch(), st.stoch_signal()
-        macd = ta.trend.MACD(df["close"]); df["MACD"], df["MACD_signal"], df["MACD_hist"] = macd.macd(), macd.macd_signal(), macd.macd_diff()
-        bb = ta.volatility.BollingerBands(df["close"]); df["BB_upper"], df["BB_lower"] = bb.bollinger_hband(), bb.bollinger_lband(); df["BB_bw"] = (df["BB_upper"]-df["BB_lower"])/(df["close"]+1e-9)
         df["ATR"] = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], ATR_PERIOD).average_true_range()
-        df["OBV"] = ta.volume.OnBalanceVolumeIndicator(df["close"], df["volume"]).on_balance_volume()
-        df["ADX"] = abs(df["close"].diff().fillna(0).rolling(ADX_PERIOD).mean())
-        df["+DI"], df["-DI"] = df["close"].diff().clip(lower=0).rolling(ADX_PERIOD).mean(), (-df["close"].diff()).clip(lower=0).rolling(ADX_PERIOD).mean()
-    df["VWAP"] = (df["close"]*df["volume"]).rolling(VWAP_PERIOD).sum() / (df["volume"].rolling(VWAP_PERIOD).sum() + 1e-9)
-    df["BullishEngulfing"] = (df["close"] > df["open"]) & (df["close"].shift(1) < df["open"].shift(1))
-    df["BearishEngulfing"] = (df["close"] < df["open"]) & (df["close"].shift(1) > df["open"].shift(1))
-    df["Doji"] = abs(df["close"] - df["open"]) < (df["high"] - df["low"])*0.1
-    df["Hammer"] = (df["close"]-df["low"])>2*(abs(df["close"]-df["open"]))
     high_v, low_v = df["close"].max(), df["close"].min(); diff = max(high_v-low_v,1e-9)
     df["Fib_0.382"], df["Fib_0.5"], df["Fib_0.618"] = high_v-0.382*diff, high_v-0.5*diff, high_v-0.618*diff
-    df["ret1"], df["vol20"] = df["close"].pct_change(), df["close"].pct_change().rolling(20).std()
     return df
 
-# ================ ML FUNCTIONS ================
+# ================ ML & VOTES ================
 def build_features(df: pd.DataFrame):
     feats = pd.DataFrame(index=df.index)
     feats["EMA_fast"], feats["EMA_slow"], feats["EMA_ratio"] = df["EMA_fast"], df["EMA_slow"], df["EMA_fast"]/(df["EMA_slow"]+1e-9)
-    feats["RSI"], feats["MACD_hist"], feats["StochK"], feats["StochD"], feats["BB_bw"], feats["ATR"], feats["OBV"] = df["RSI"], df["MACD_hist"], df["%K"], df["%D"], df["BB_bw"], df["ATR"], df["OBV"]
-    feats["ret1"] = df["ret1"]
-    feats["vol20"] = df["vol20"]
+    feats["RSI"] = df["RSI"]
     feats = feats.replace([np.inf,-np.inf], np.nan).dropna()
     return feats
-
-def train_ensemble(X, y):
-    lr = LogisticRegression(max_iter=500)
-    rf = RandomForestClassifier(n_estimators=100, max_depth=6, n_jobs=-1, random_state=42)
-    xg = xgb.XGBClassifier(n_estimators=120,max_depth=4,use_label_encoder=False,eval_metric="logloss",n_jobs=-1)
-    ensemble = VotingClassifier([("lr", lr), ("rf", rf), ("xg", xg)], voting="hard")
-    ensemble.fit(X, y)
-    return ensemble
-
-def atomic_save_model(model, path):
-    tmp = None
-    lock = FileLock(MODEL_LOCKPATH, timeout=30)
-    try:
-        with lock:
-            with NamedTemporaryFile(dir=os.path.dirname(path), delete=False) as tf:
-                dump(model, tf.name)
-                tmp = tf.name
-            os.replace(tmp, path)
-    except Exception as e:
-        logger.error("Failed to save model atomically: %s", e)
-        if tmp and os.path.exists(tmp):
-            try: os.remove(tmp)
-            except Exception: pass
-
-def load_model_safe(path):
-    if not os.path.exists(path):
-        return None
-    lock = FileLock(MODEL_LOCKPATH, timeout=30)
-    try:
-        with lock: return load(path)
-    except Exception as e:
-        logger.error("Failed to load model safely: %s", e)
-        return None
-
-def train_and_persist_model(df):
-    feats = build_features(df)
-    if len(feats)<100: logger.warning("Not enough data to train model"); return None
-    y = (df["close"].shift(-1).loc[feats.index] > df["close"].loc[feats.index]).astype(int)
-    X_train, X_test, y_train, y_test = train_test_split(feats, y, test_size=0.2, shuffle=False)
-    model = train_ensemble(X_train, y_train)
-    atomic_save_model(model, MODEL_PATH)
-    return model
 
 def run_ml_predict(df):
     feats = build_features(df)
     if len(feats)<30: return [], 0.5
     model = load_model_safe(MODEL_PATH)
-    if model is None: model = train_and_persist_model(df)
     if model is None: return [], 0.5
     X_latest = feats.iloc[-1:].values
     pred = int(model.predict(X_latest)[0])
     conf = max(model.predict_proba(X_latest)[0]) if hasattr(model, "predict_proba") else 0.7
     return ["BUY"] if pred==1 else ["SELL"], conf
 
-# ================ SIGNALS ================
-def detect_candles(df: pd.DataFrame):
-    if df.empty or len(df)<2: return []
-    last = df.iloc[-1]; patt=[]
-    if last.get("BullishEngulfing", False): patt.append("BUY")
-    if last.get("BearishEngulfing", False): patt.append("SELL")
-    if last.get("Doji", False): patt.append("HOLD")
-    if last.get("Hammer", False): patt.append("BUY")
-    return [p for p in patt if p in ("BUY","SELL")]
-
-def combine_votes(votes_dict, ml_conf):
-    votes_flat=[]; [votes_flat.extend(v) for v in votes_dict.values()]
-    buy, sell=votes_flat.count("BUY"), votes_flat.count("SELL")
-    if "ML" in votes_dict:
-        if "BUY" in votes_dict["ML"]: buy += 2
-        if "SELL" in votes_dict["ML"]: sell += 2
-    if buy>sell: return "BUY", buy, sell
-    if sell>buy: return "SELL", buy, sell
-    return "HOLD", buy, sell
-
 def indicator_votes(df: pd.DataFrame):
-    if df.empty: return {}
-    row = df.iloc[-1]; votes={}
+    if df.empty: return {}, 0.5
+    votes={}
+    row = df.iloc[-1]
     votes["EMA"] = ["BUY"] if row["EMA_fast"]>row["EMA_slow"] else ["SELL"]
-    votes["RSI"] = ["BUY"] if row["RSI"]<30 else ["SELL"] if row["RSI"]>70 else []
-    votes["Stoch"] = ["BUY"] if row["%K"]>row["%D"] else ["SELL"]
-    votes["MACD"] = ["BUY"] if row["MACD"]>row["MACD_signal"] else ["SELL"]
-    votes["Bollinger"] = ["BUY"] if row["close"]<row["BB_lower"] else ["SELL"] if row["close"]>row["BB_upper"] else []
-    votes["ADX"] = ["BUY"] if row["ADX"]>25 and row["+DI"]>row["-DI"] else ["SELL"] if row["ADX"]>25 and row["+DI"]<row["-DI"] else []
-    votes["VWAP"] = ["BUY"] if row["close"]>row["VWAP"] else ["SELL"] if row["close"]<row["VWAP"] else []
-    votes["Candle"] = detect_candles(df)
     votes["ML"], ml_conf = run_ml_predict(df)
     votes["Harmonic"] = []
     harmonics = detect_harmonics(df)
@@ -265,105 +157,74 @@ def indicator_votes(df: pd.DataFrame):
         elif "SELL" in p: votes["Harmonic"].extend(["SELL","SELL"])
     return votes, ml_conf
 
-# ================ HYBRID 1D + 1W LOGIC ================
-async def hybrid_price(symbol: str, approach="conservative"):
-    df_d = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
-    df_w = await fetch_kucoin_candles(symbol, "1w", MAX_OHLCV)
-    if df_d.empty or df_w.empty: return 0, 0
-    last_d, last_w = df_d["close"].iloc[-1], df_w["close"].iloc[-1]
+def combine_votes(votes_dict, ml_conf):
+    votes_flat=[]; [votes_flat.extend(v) for v in votes_dict.values()]
+    buy, sell=votes_flat.count("BUY"), votes_flat.count("SELL")
+    if buy>sell: return "BUY", buy, sell
+    if sell>buy: return "SELL", buy, sell
+    return "HOLD", buy, sell
 
-    if approach=="conservative":
-        buy_price = max(last_d, last_w)
-        sell_price = min(last_d, last_w)
-    elif approach=="aggressive":
-        buy_price = min(last_d, last_w)
-        sell_price = max(last_d, last_w)
-    else:  # hybrid/neutral
-        buy_price = (last_d + last_w)/2
-        sell_price = (last_d + last_w)/2
-    return smart_round(buy_price), smart_round(sell_price)
-
-# ================ SUGGESTED PRICES ================
-def suggested_prices(df: pd.DataFrame, vote: str):
-    last = df["close"].iloc[-1]
-    atr = df["ATR"].iloc[-1] if "ATR" in df.columns else last * 0.01
-    buy_price = last - atr
-    sell_price = last + atr
-
+# ================ HYBRID PRICE ================
+def hybrid_suggested_price(df_daily: pd.DataFrame, df_weekly: pd.DataFrame, vote: str, strategy: str = "conservative"):
+    last_price = df_daily["close"].iloc[-1]
     levels = []
-    for f in ["Fib_0.382", "Fib_0.5", "Fib_0.618"]:
-        if f in df.columns: levels.append(float(df[f].iloc[-1]))
-
-    harmonics = detect_harmonics(df)
-    for h in harmonics:
-        try: levels.append(float(h.split("@")[-1]))
-        except: pass
-
-    if levels:
-        if vote=="BUY":
-            below = [l for l in levels if l<last]
-            if below: buy_price = max(below)
-        elif vote=="SELL":
-            above = [l for l in levels if l>last]
-            if above: sell_price = min(above)
-
+    for df in [df_daily, df_weekly]:
+        for f in ["Fib_0.382","Fib_0.5","Fib_0.618"]:
+            if f in df.columns: levels.append(float(df[f].iloc[-1]))
+        harmonics = detect_harmonics(df)
+        for h in harmonics:
+            try: levels.append(float(h.split("@")[-1]))
+            except: pass
+    if not levels:
+        atr = df_daily["ATR"].iloc[-1] if "ATR" in df_daily.columns else last_price*0.01
+        levels = [last_price-atr, last_price+atr]
+    buy_candidates = [l for l in levels if l < last_price]
+    sell_candidates = [l for l in levels if l > last_price]
+    if strategy.lower()=="conservative":
+        buy_price = max(buy_candidates) if buy_candidates else last_price
+        sell_price = min(sell_candidates) if sell_candidates else last_price
+    elif strategy.lower()=="aggressive":
+        buy_price = min(buy_candidates) if buy_candidates else last_price
+        sell_price = max(sell_candidates) if sell_candidates else last_price
+    else:  # moderate
+        buy_price = sum(buy_candidates)/len(buy_candidates) if buy_candidates else last_price
+        sell_price = sum(sell_candidates)/len(sell_candidates) if sell_candidates else last_price
     return smart_round(buy_price), smart_round(sell_price)
 
-# ================ LOGGING & FORMATTING ================
 def log_to_csv(symbol, tf, price, final, votes, buy, sell):
     flat=[]
     for k,v in votes.items(): flat.extend([f"{k}:{s}" for s in v])
     entry={"timestamp": now_str(), "symbol": symbol, "interval": tf, "price": round(float(price),6),
-           "decision": final, "buy_votes": buy, "sell_votes": sell, "signals": ",".join(flat)}
+           "decision": final, "buy_votes": buy, "sell_votes": sell, "signals":",".join(flat)}
     pd.DataFrame([entry]).to_csv(CSV_FILE, mode="a", index=False, header=not os.path.exists(CSV_FILE))
 
-def format_message(symbol, tf, price, final, buy, sell, buy_p, sell_p, ml_conf):
-    t = now_str()
-    return (f"⏰ {t}\n📊 {symbol} | {tf}\n💰 Last Price: {round(float(price),2)} USDT\n\n"
-            f"✅ FINAL DECISION: {final}\n🛒 Suggested Buy Price: {buy_p} USDT\n💵 Suggested Sell Price: {sell_p} USDT\n"
-            f"💡 ML Confidence: {round(ml_conf*100,2)}%")
-
 # ================ ANALYZE SYMBOL ================
-async def analyze_symbol(symbol: str, tf: str):
-    key = (symbol, tf)
+async def analyze_symbol_combined(symbol: str, strategy: str = "conservative"):
     now = datetime.utcnow()
-    if key in last_sent_time and now - last_sent_time[key] < timedelta(minutes=COOLDOWN_MINUTES):
-        return
-
-    df = await fetch_kucoin_candles(symbol, tf, MAX_OHLCV)
-    if df.empty: return
-    if df["close"].iloc[-1] * df["volume"].iloc[-1] < MIN_VOLUME_USDT: return
-
-    df = add_indicators(df).dropna().reset_index(drop=True)
-    votes, ml_conf = indicator_votes(df)
-    final, buy_votes, sell_votes = combine_votes(votes, ml_conf)
-
-    strategy = TOKEN_STRATEGY.get(symbol.replace("-USDT",""), "conservative")
-    buy_price, sell_price = await hybrid_price(symbol, approach=strategy)
-    last_price = df["close"].iloc[-1]
-
-    # ML confidence weighting
-    if ml_conf > 0.5:
-        buy_price = smart_round(buy_price + (last_price - buy_price) * (ml_conf - 0.5) * 2)
-        sell_price = smart_round(sell_price - (sell_price - last_price) * (ml_conf - 0.5) * 2)
-
-    if key in last_price_sent and abs(last_price - last_price_sent[key]) / max(last_price_sent[key], 1e-9) < PRICE_CHANGE_THRESHOLD:
-        return
-    last_price_sent[key] = last_price
-    last_sent_time[key] = now
-
-    log_to_csv(symbol, tf, last_price, final, votes, buy_votes, sell_votes)
-    msg = f"{strategy.capitalize()} strategy\n" + format_message(symbol, tf, last_price, final, buy_votes, sell_votes, buy_price, sell_price, ml_conf)
+    df_daily = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
+    df_weekly = await fetch_kucoin_candles(symbol, "1w", MAX_OHLCV)
+    if df_daily.empty or df_weekly.empty: return
+    if df_daily["close"].iloc[-1] * df_daily["volume"].iloc[-1] < MIN_VOLUME_USDT: return
+    df_daily = add_indicators(df_daily).dropna().reset_index(drop=True)
+    df_weekly = add_indicators(df_weekly).dropna().reset_index(drop=True)
+    votes, ml_conf = indicator_votes(df_daily)
+    final_decision, buy_votes, sell_votes = combine_votes(votes, ml_conf)
+    buy_p, sell_p = hybrid_suggested_price(df_daily, df_weekly, final_decision, strategy)
+    last_price = df_daily["close"].iloc[-1]
+    log_to_csv(symbol, "1d+1w", last_price, final_decision, votes, buy_votes, sell_votes)
+    msg = f"{strategy.capitalize()} strategy\n⏰ {now_str()}\n📊 {symbol}\n💰 Last Price: {last_price} USDT\n\n"\
+          f"✅ FINAL DECISION: {final_decision}\n🛒 Suggested Buy Price: {buy_p} USDT\n💵 Suggested Sell Price: {sell_p} USDT\n"\
+          f"💡 ML Confidence: {round(ml_conf*100,2)}%"
+    logger.info(f"DEBUG: Sending Telegram for {symbol} at price {last_price}")
     asyncio.create_task(send_telegram(msg))
-    logger.info("Analyzed %s %s -> %s (buy:%d sell:%d, ML: %.1f%%)", symbol, tf, final, buy_votes, sell_votes, ml_conf*100)
 
 # ================ MAIN LOOP ================
-async def continuous_monitor():
+async def continuous_monitor(strategy: str = "conservative"):
     logger.info("Starting Continuous Hybrid Bot")
     while True:
-        tasks = [analyze_symbol(sym+"-USDT", tf) for sym in TOKENS for tf in TIMEFRAMES]
+        tasks = [analyze_symbol_combined(sym+"-USDT", strategy) for sym in TOKENS]
         await asyncio.gather(*tasks)
         await asyncio.sleep(60)
 
 if __name__=="__main__":
-    asyncio.run(continuous_monitor())
+    asyncio.run(continuous_monitor(strategy="conservative"))
