@@ -90,6 +90,16 @@ async def send_telegram(msg: str):
         await bot.send_message(chat_id=CHAT_ID, text=msg)
     except Exception as e:
         logger.error("Telegram send error: %s", e)
+        
+        def smart_round(value: float) -> float:
+    """Dynamic rounding според цената на токенот."""
+    if value >= 1:
+        return round(value, 2)   # за BTC, ETH итн.
+    elif value >= 0.01:
+        return round(value, 4)   # за midcap токени
+    else:
+        return round(value, 8)   # за микро-токени како PEPE, SHIB
+
 
 # ================ FETCH ================
 async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
@@ -206,7 +216,7 @@ def train_and_persist_model(df):
 
 def run_ml_predict(df):
     feats = build_features(df)
-    if len(feats)<90: return [], 0.5
+    if len(feats)<30: return [], 0.5
     model = load_model_safe(MODEL_PATH)
     if model is None: model = train_and_persist_model(df)
     if model is None: return [], 0.5
@@ -271,7 +281,7 @@ def suggested_prices(df, vote):
             below=[l for l in levels if l<last]; buy_price=max(below) if below else last*0.995
         elif vote=="SELL":
             above=[l for l in levels if l>last]; sell_price=min(above) if above else last*1.005
-    return round(buy_price,2), round(sell_price,2)
+  return smart_round(buy_price), smart_round(sell_price)
 
 def log_to_csv(symbol, tf, price, final, votes, buy, sell):
     flat=[]
