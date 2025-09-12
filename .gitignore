@@ -1,35 +1,4 @@
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-*.pyd
-
-# Virtual environment
-venv/
-env/
-.venv/
-
-# Jupyter
-.ipynb_checkpoints
-
-# Logs
-*.log
-*.csv
-
-# Models
 .models/
-*.joblib
-
-# IDEs
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Secrets
+hybrid_bot_log.csv
 .env
