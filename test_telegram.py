@@ -1,27 +1,57 @@
-name: Test KuCoin API
+import time
+import base64
+import hmac
+import hashlib
+import requests
+import os
 
-on:
-  workflow_dispatch:  # ќе можеш рачно да го стартуваш од GitHub Actions таб
+# Земи ги од env (GitHub Actions secrets ќе бидат map-ирани тука)
+API_KEY = os.getenv("KUCOIN_API_KEY")
+API_SECRET = os.getenv("KUCOIN_API_SECRET")
+API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
+BASE_URL = "https://api.kucoin.com"
 
-jobs:
-  test-kucoin:
-    runs-on: ubuntu-latest
-    env:
-      KUCOIN_API_KEY: ${{ secrets.KUCOIN_API_KEY }}
-      KUCOIN_API_SECRET: ${{ secrets.KUCOIN_API_SECRET }}
-      KUCOIN_API_PASSPHRASE: ${{ secrets.KUCOIN_API_PASSPHRASE }}
+def sign_request(method, endpoint, body=""):
+    now = int(time.time() * 1000)
+    str_to_sign = str(now) + method + endpoint + body
+    signature = base64.b64encode(
+        hmac.new(API_SECRET.encode("utf-8"), str_to_sign.encode("utf-8"), hashlib.sha256).digest()
+    )
+    passphrase = base64.b64encode(
+        hmac.new(API_SECRET.encode("utf-8"), API_PASSPHRASE.encode("utf-8"), hashlib.sha256).digest()
+    )
+    headers = {
+        "KC-API-KEY": API_KEY,
+        "KC-API-SIGN": signature.decode(),
+        "KC-API-TIMESTAMP": str(now),
+        "KC-API-PASSPHRASE": passphrase.decode(),
+        "KC-API-KEY-VERSION": "2",
+        "Content-Type": "application/json"
+    }
+    return headers
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+def get_symbols():
+    endpoint = "/api/v1/symbols"
+    url = BASE_URL + endpoint
+    headers = sign_request("GET", endpoint)
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    return data
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
+def main():
+    data = get_symbols()
+    if "data" not in data:
+        print("❌ Грешка:", data)
+        return
 
-      - name: Install dependencies
-        run: pip install requests
+    symbols = data["data"]
+    print(f"Вкупно симболи: {len(symbols)}")
 
-      - name: Run KuCoin Test Script
-        run: python test_kucoin.py
+    usdt_symbols = [s for s in symbols if s["quoteCurrency"] == "USDT"]
+    print(f"USDT симболи најдени: {len(usdt_symbols)}")
+
+    for s in usdt_symbols[:20]:  # прикажи првите 20 за пример
+        print(f"{s['symbol']} (base={s['baseCurrency']}, quote={s['quoteCurrency']})")
+
+if __name__ == "__main__":
+    main()
