@@ -1,0 +1,35 @@
+name: Run Hybrid Bot
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # стартува на секои 6 часа
+  workflow_dispatch:        # опција за рачно пуштање
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360    # максимум 6h (360 минути)
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          KUCOIN_API_KEY: ${{ secrets.KUCOIN_API_KEY }}
+          KUCOIN_API_SECRET: ${{ secrets.KUCOIN_API_SECRET }}
+          KUCOIN_API_PASSPHRASE: ${{ secrets.KUCOIN_API_PASSPHRASE }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python main.py
