@@ -264,24 +264,46 @@ def indicator_votes(df: pd.DataFrame):
         elif "SELL" in p: votes["Harmonic"].extend(["SELL","SELL"])
     return votes, ml_conf
 
-def suggested_prices(df, vote):
+def suggested_prices(df: pd.DataFrame, vote: str):
     last = df["close"].iloc[-1]
-    buy_price, sell_price = last * 0.99, last * 1.01
+
+    # 1. ATR (Average True Range) за да ја измериме "нормалната" дневна варијација
+    atr = df["ATR"].iloc[-1] if "ATR" in df.columns else last * 0.01
+
+    # 2. Почетни buy/sell цени со ATR логика
+    buy_price = last - atr
+    sell_price = last + atr
+
+    # 3. Фибоначи нивоа како дополнителни сигнали
     levels = []
     for f in ["Fib_0.382", "Fib_0.5", "Fib_0.618"]:
         if f in df.columns:
-            try: levels.append(float(df[f].iloc[-1]))
-            except: pass
+            try:
+                levels.append(float(df[f].iloc[-1]))
+            except:
+                pass
+
+    # 4. Harmonic patterns (ако има детектирани нивоа)
     harmonics = detect_harmonics(df)
     for h in harmonics:
-        try: levels.append(float(h.split("@")[-1]))
-        except: pass
+        try:
+            levels.append(float(h.split("@")[-1]))
+        except:
+            pass
+
+    # 5. Ако има дополнителни нивоа → користи ги за подобра цена
     if levels:
-        if vote=="BUY":
-            below=[l for l in levels if l<last]; buy_price=max(below) if below else last*0.995
-        elif vote=="SELL":
-            above=[l for l in levels if l>last]; sell_price=min(above) if above else last*1.005
-  return smart_round(buy_price), smart_round(sell_price)
+        if vote == "BUY":
+            below = [l for l in levels if l < last]
+            if below:
+                buy_price = max(below)
+        elif vote == "SELL":
+            above = [l for l in levels if l > last]
+            if above:
+                sell_price = min(above)
+
+    # 6. Финално врати со smart_round
+    return smart_round(buy_price), smart_round(sell_price)
 
 def log_to_csv(symbol, tf, price, final, votes, buy, sell):
     flat=[]
