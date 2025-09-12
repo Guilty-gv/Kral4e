@@ -1,12 +1,10 @@
-numpy
 pandas
+numpy
+python-telegram-bot==20.3
+kucoin-python
+harmonics
 scikit-learn
 xgboost
-ta-lib
 ta
 joblib
 filelock
-python-telegram-bot
-harmonics
-aiohttp
-kucoin-python
