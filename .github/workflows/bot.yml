@@ -1,51 +1,53 @@
-name: Bot Workflows
+name: Run Both Bots with Color Logging
 
 on:
   push:
     branches:
-      - main  # Или кој и да е branch каде работиш
-  workflow_dispatch:  # Овозможува и рачно стартување
+      - main
+  workflow_dispatch:
 
 jobs:
-  run-main-bot:
+  run-bots:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout на репозиториумот
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      # 3. Инсталира dependencies ако имаш requirements.txt
       - name: Install dependencies
         run: |
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements.txt ]; then
+            echo -e "\033[1;32mInstalling dependencies...\033[0m"
+            pip install -r requirements.txt
+          else
+            echo -e "\033[1;33mNo requirements.txt found, skipping dependency installation.\033[0m"
+          fi
 
-      # 4. Изврши го главниот бот
       - name: Run main bot
-        run: python bot_main.py
-
-  run-hybrid-bot:  # Нов job за твојот hybrid_bot_final.py
-    runs-on: ubuntu-latest
-    needs: run-main-bot   # Ако сакаш да се изврши по главниот бот
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
         run: |
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          echo -e "\033[1;34m===== Starting main bot =====\033[0m"
+          python bot_main.py
+          BOT_MAIN_EXIT_CODE=$?
+          if [ $BOT_MAIN_EXIT_CODE -eq 0 ]; then
+            echo -e "\033[1;32m===== Main bot finished successfully =====\033[0m"
+          else
+            echo -e "\033[1;31m===== Main bot failed with exit code $BOT_MAIN_EXIT_CODE =====\033[0m"
+            exit $BOT_MAIN_EXIT_CODE
+          fi
 
       - name: Run hybrid bot
-        run: python hybrid_bot_final.py
+        run: |
+          echo -e "\033[1;34m===== Starting hybrid bot =====\033[0m"
+          python hybrid_bot_final.py
+          HYBRID_EXIT_CODE=$?
+          if [ $HYBRID_EXIT_CODE -eq 0 ]; then
+            echo -e "\033[1;32m===== Hybrid bot finished successfully =====\033[0m"
+          else
+            echo -e "\033[1;31m===== Hybrid bot failed with exit code $HYBRID_EXIT_CODE =====\033[0m"
+            exit $HYBRID_EXIT_CODE
+          fi
