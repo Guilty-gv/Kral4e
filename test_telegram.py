@@ -1,22 +1,27 @@
-# test_telegram_bot.py
-import os
-import logging
-from telegram import Bot
+name: Test KuCoin API
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("telegram_test")
+on:
+  workflow_dispatch:  # ќе можеш рачно да го стартуваш од GitHub Actions таб
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # за група треба да почнува со '-'
+jobs:
+  test-kucoin:
+    runs-on: ubuntu-latest
+    env:
+      KUCOIN_API_KEY: ${{ secrets.KUCOIN_API_KEY }}
+      KUCOIN_API_SECRET: ${{ secrets.KUCOIN_API_SECRET }}
+      KUCOIN_API_PASSPHRASE: ${{ secrets.KUCOIN_API_PASSPHRASE }}
 
-if not TELEGRAM_TOKEN or not CHAT_ID:
-    logger.error("TELEGRAM_TOKEN или CHAT_ID не се поставени!")
-    exit(1)
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-try:
-    bot = Bot(token=TELEGRAM_TOKEN)
-    msg = "✅ Test message from Hybrid Bot"
-    bot.send_message(chat_id=CHAT_ID, text=msg)
-    logger.info("Test message successfully sent!")
-except Exception as e:
-    logger.exception("Failed to send test message: %s", e)
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run KuCoin Test Script
+        run: python test_kucoin.py
