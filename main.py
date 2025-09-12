@@ -48,6 +48,9 @@ COOLDOWN_MINUTES = 60
 TOKENS = ["BTC","XRP","LINK","ONDO","AVAX","W","ACH","PEPE","PONKE","ICP",
           "FET","ALGO","HBAR","KAS","PYTH","IOTA","WAXL","ETH","ADA"]
 
+# Ако сакаш можеш да зададеш различна стратегија по токен
+TOKEN_STRATEGY = {t:"conservative" for t in TOKENS}  # "conservative" или "aggressive"
+
 # KuCoin API config
 KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
 KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
@@ -90,7 +93,7 @@ async def send_telegram(msg: str):
         await bot.send_message(chat_id=CHAT_ID, text=msg)
     except Exception as e:
         logger.error("Telegram send error: %s", e)
-        
+
 def smart_round(value: float) -> float:
     """Dynamic rounding според цената на токенот."""
     if value >= 1:
@@ -99,7 +102,6 @@ def smart_round(value: float) -> float:
         return round(value, 4)   # за midcap токени
     else:
         return round(value, 8)   # за микро-токени како PEPE, SHIB
-
 
 # ================ FETCH ================
 async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
@@ -117,7 +119,6 @@ async def fetch_kucoin_candles(symbol: str, tf: str, limit: int = 200):
             logger.info("SKIP %s-%s: Empty response", symbol, tf)
             return pd.DataFrame()
         df = pd.DataFrame(candles, columns=["timestamp","open","close","high","low","volume","turnover"])
-        
         for col in ["open","close","high","low","volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df = df.dropna(subset=["close","volume"])
@@ -264,47 +265,51 @@ def indicator_votes(df: pd.DataFrame):
         elif "SELL" in p: votes["Harmonic"].extend(["SELL","SELL"])
     return votes, ml_conf
 
+# ================ HYBRID 1D + 1W LOGIC ================
+async def hybrid_price(symbol: str, approach="conservative"):
+    df_d = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
+    df_w = await fetch_kucoin_candles(symbol, "1w", MAX_OHLCV)
+    if df_d.empty or df_w.empty: return 0, 0
+    last_d, last_w = df_d["close"].iloc[-1], df_w["close"].iloc[-1]
+
+    if approach=="conservative":
+        buy_price = max(last_d, last_w)
+        sell_price = min(last_d, last_w)
+    elif approach=="aggressive":
+        buy_price = min(last_d, last_w)
+        sell_price = max(last_d, last_w)
+    else:  # hybrid/neutral
+        buy_price = (last_d + last_w)/2
+        sell_price = (last_d + last_w)/2
+    return smart_round(buy_price), smart_round(sell_price)
+
+# ================ SUGGESTED PRICES ================
 def suggested_prices(df: pd.DataFrame, vote: str):
     last = df["close"].iloc[-1]
-
-    # 1. ATR (Average True Range) за да ја измериме "нормалната" дневна варијација
     atr = df["ATR"].iloc[-1] if "ATR" in df.columns else last * 0.01
-
-    # 2. Почетни buy/sell цени со ATR логика
     buy_price = last - atr
     sell_price = last + atr
 
-    # 3. Фибоначи нивоа како дополнителни сигнали
     levels = []
     for f in ["Fib_0.382", "Fib_0.5", "Fib_0.618"]:
-        if f in df.columns:
-            try:
-                levels.append(float(df[f].iloc[-1]))
-            except:
-                pass
+        if f in df.columns: levels.append(float(df[f].iloc[-1]))
 
-    # 4. Harmonic patterns (ако има детектирани нивоа)
     harmonics = detect_harmonics(df)
     for h in harmonics:
-        try:
-            levels.append(float(h.split("@")[-1]))
-        except:
-            pass
+        try: levels.append(float(h.split("@")[-1]))
+        except: pass
 
-    # 5. Ако има дополнителни нивоа → користи ги за подобра цена
     if levels:
-        if vote == "BUY":
-            below = [l for l in levels if l < last]
-            if below:
-                buy_price = max(below)
-        elif vote == "SELL":
-            above = [l for l in levels if l > last]
-            if above:
-                sell_price = min(above)
+        if vote=="BUY":
+            below = [l for l in levels if l<last]
+            if below: buy_price = max(below)
+        elif vote=="SELL":
+            above = [l for l in levels if l>last]
+            if above: sell_price = min(above)
 
-    # 6. Финално врати со smart_round
     return smart_round(buy_price), smart_round(sell_price)
 
+# ================ LOGGING & FORMATTING ================
 def log_to_csv(symbol, tf, price, final, votes, buy, sell):
     flat=[]
     for k,v in votes.items(): flat.extend([f"{k}:{s}" for s in v])
@@ -322,41 +327,35 @@ def format_message(symbol, tf, price, final, buy, sell, buy_p, sell_p, ml_conf):
 async def analyze_symbol(symbol: str, tf: str):
     key = (symbol, tf)
     now = datetime.utcnow()
-
-    # Проверка за cooldown
     if key in last_sent_time and now - last_sent_time[key] < timedelta(minutes=COOLDOWN_MINUTES):
         return
 
     df = await fetch_kucoin_candles(symbol, tf, MAX_OHLCV)
-    if df.empty: 
-        return
-    if df["close"].iloc[-1] * df["volume"].iloc[-1] < MIN_VOLUME_USDT: 
-        return
+    if df.empty: return
+    if df["close"].iloc[-1] * df["volume"].iloc[-1] < MIN_VOLUME_USDT: return
 
     df = add_indicators(df).dropna().reset_index(drop=True)
     votes, ml_conf = indicator_votes(df)
-    final, buy, sell = combine_votes(votes, ml_conf)
-    buy_p, sell_p = suggested_prices(df, final)
+    final, buy_votes, sell_votes = combine_votes(votes, ml_conf)
+
+    strategy = TOKEN_STRATEGY.get(symbol.replace("-USDT",""), "conservative")
+    buy_price, sell_price = await hybrid_price(symbol, approach=strategy)
     last_price = df["close"].iloc[-1]
 
-    # Проверка за минимална промена на цена
+    # ML confidence weighting
+    if ml_conf > 0.5:
+        buy_price = smart_round(buy_price + (last_price - buy_price) * (ml_conf - 0.5) * 2)
+        sell_price = smart_round(sell_price - (sell_price - last_price) * (ml_conf - 0.5) * 2)
+
     if key in last_price_sent and abs(last_price - last_price_sent[key]) / max(last_price_sent[key], 1e-9) < PRICE_CHANGE_THRESHOLD:
         return
     last_price_sent[key] = last_price
     last_sent_time[key] = now
 
-    # Логирање на CSV
-    log_to_csv(symbol, tf, last_price, final, votes, buy, sell)
-
-    # Формирање на пораката
-    msg = format_message(symbol, tf, last_price, final, buy, sell, buy_p, sell_p, ml_conf)
-    logger.info(f"DEBUG: Sending Telegram for {symbol} {tf} at price {last_price}")
-
-    # Асинхроно испраќање порака
+    log_to_csv(symbol, tf, last_price, final, votes, buy_votes, sell_votes)
+    msg = f"{strategy.capitalize()} strategy\n" + format_message(symbol, tf, last_price, final, buy_votes, sell_votes, buy_price, sell_price, ml_conf)
     asyncio.create_task(send_telegram(msg))
-
-    logger.info("Analyzed %s %s -> %s (buy:%d sell:%d)", symbol, tf, final, buy, sell)
-
+    logger.info("Analyzed %s %s -> %s (buy:%d sell:%d, ML: %.1f%%)", symbol, tf, final, buy_votes, sell_votes, ml_conf*100)
 
 # ================ MAIN LOOP ================
 async def continuous_monitor():
@@ -364,7 +363,7 @@ async def continuous_monitor():
     while True:
         tasks = [analyze_symbol(sym+"-USDT", tf) for sym in TOKENS for tf in TIMEFRAMES]
         await asyncio.gather(*tasks)
-        await asyncio.sleep(60)  # check every 60 seconds
+        await asyncio.sleep(60)
 
 if __name__=="__main__":
     asyncio.run(continuous_monitor())
