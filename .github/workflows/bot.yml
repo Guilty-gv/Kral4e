@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy pandas scikit-learn xgboost ta-lib ta joblib filelock python-telegram-bot harmonics aiohttp kucoin-python
+          pip install -r requirements.txt
 
       - name: Run Hybrid Bot
         run: python hybrid_bot_final.py
