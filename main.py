@@ -91,7 +91,7 @@ async def send_telegram(msg: str):
     except Exception as e:
         logger.error("Telegram send error: %s", e)
         
-        def smart_round(value: float) -> float:
+def smart_round(value: float) -> float:
     """Dynamic rounding според цената на токенот."""
     if value >= 1:
         return round(value, 2)   # за BTC, ETH итн.
