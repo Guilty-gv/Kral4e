@@ -1,17 +1,17 @@
-name: Run Hybrid Bot
+name: Run Hybrid Crypto Bot
 
 on:
   schedule:
     - cron: "0 */6 * * *"   # стартува на секои 6 часа
-  workflow_dispatch:        # опција за рачно пуштање
+  workflow_dispatch:        # дозволува рачно пуштање од GitHub
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360    # максимум 6h (360 минути)
-    
+    timeout-minutes: 360    # максимум 6 часа
+
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Setup Python
@@ -32,4 +32,5 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
+          echo -e "\033[1;34m===== Starting main bot =====\033[0m"
           python main.py
