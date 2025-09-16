@@ -51,13 +51,13 @@ async def fetch_kucoin_candles(symbol: str, timeframe: str, limit: int):
     loop = asyncio.get_event_loop()
 
     def get_kline():
-        # --- исправен повик со kline_type ---
         return client.get_kline(symbol=symbol, kline_type=interval, limit=limit)
 
     data = await loop.run_in_executor(None, get_kline)
     df = pd.DataFrame(data, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
+    # Конвертирај во float за да нема warning
+    df[["time","open","close","high","low","volume","turnover"]] = df[["time","open","close","high","low","volume","turnover"]].apply(pd.to_numeric, errors='coerce')
     df["time"] = pd.to_datetime(df["time"], unit="ms")
-    df[["open","close","high","low","volume","turnover"]] = df[["open","close","high","low","volume","turnover"]].astype(float)
     return df
 
 # ================= DUMMY INDICATORS =================
@@ -69,7 +69,10 @@ def weighted_voting_signals(df: pd.DataFrame, token: str):
     return "HOLD", 0.0
 
 def hybrid_price_targets(df: pd.DataFrame, last_price: float):
-    return last_price*0.98, last_price*1.02, [last_price*0.95, last_price*1.05]
+    buy = last_price * 0.98
+    sell = last_price * 1.02
+    fibs = [last_price * 0.95, last_price, last_price * 1.05]  # секогаш 3 елементи
+    return buy, sell, fibs
 
 def update_adaptive_weights(token: str, decision: str, price: float):
     adaptive_weights[token] = adaptive_weights.get(token, {
@@ -109,7 +112,12 @@ async def analyze_symbol(symbol: str):
         and (key not in last_sent_time or now - last_sent_time[key] >= timedelta(minutes=COOLDOWN_MINUTES))
     )
 
-    # Format message with 5 decimals
+    if not send_alert:
+        return
+
+    last_price_sent[key] = last_price
+    last_sent_time[key] = now
+
     msg = (
         f"Strategy: Production-Ready Hybrid\n"
         f"⏰ Time: {now.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
@@ -126,12 +134,6 @@ async def analyze_symbol(symbol: str):
         f"'candles': {adaptive_weights[token].get('candles',0):.5f}, "
         f"'exotic': {adaptive_weights[token].get('exotic',0):.5f} }}"
     )
-
-    if not send_alert:
-        return
-
-    last_price_sent[key] = last_price
-    last_sent_time[key] = now
 
     logger.info(f"Sending Telegram message: {msg}")
     asyncio.create_task(send_telegram(msg))
