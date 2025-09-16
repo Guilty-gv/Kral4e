@@ -51,7 +51,8 @@ async def fetch_kucoin_candles(symbol: str, timeframe: str, limit: int):
     loop = asyncio.get_event_loop()
 
     def get_kline():
-        return client.get_kline(symbol, interval=interval, limit=limit)
+        # --- исправен повик со kline_type ---
+        return client.get_kline(symbol=symbol, kline_type=interval, limit=limit)
 
     data = await loop.run_in_executor(None, get_kline)
     df = pd.DataFrame(data, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
