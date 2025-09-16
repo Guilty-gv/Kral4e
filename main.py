@@ -55,7 +55,6 @@ async def fetch_kucoin_candles(symbol: str, timeframe: str, limit: int):
 
     data = await loop.run_in_executor(None, get_kline)
     df = pd.DataFrame(data, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
-    # Конвертирај во float за да нема warning
     df[["time","open","close","high","low","volume","turnover"]] = df[["time","open","close","high","low","volume","turnover"]].apply(pd.to_numeric, errors='coerce')
     df["time"] = pd.to_datetime(df["time"], unit="ms")
     return df
@@ -75,9 +74,14 @@ def hybrid_price_targets(df: pd.DataFrame, last_price: float):
     return buy, sell, fibs
 
 def update_adaptive_weights(token: str, decision: str, price: float):
-    adaptive_weights[token] = adaptive_weights.get(token, {
-        "structure": 0.36, "momentum": 0.24, "volume": 0.14, "candles": 0.16, "exotic": 0.10
-    })
+    if token not in adaptive_weights:
+        adaptive_weights[token] = {
+            "structure": 0.36,
+            "momentum": 0.24,
+            "volume": 0.14,
+            "candles": 0.16,
+            "exotic": 0.10
+        }
 
 # ================= WEIGHTED VOTING =================
 def multi_timeframe_voting(dfs: dict, token: str):
@@ -94,6 +98,17 @@ def multi_timeframe_voting(dfs: dict, token: str):
 # ================= ANALYZE SYMBOL =================
 async def analyze_symbol(symbol: str):
     token = symbol.replace("-USDT","")
+
+    # Инициализација на adaptive_weights ако не постои
+    if token not in adaptive_weights:
+        adaptive_weights[token] = {
+            "structure": 0.36,
+            "momentum": 0.24,
+            "volume": 0.14,
+            "candles": 0.16,
+            "exotic": 0.10
+        }
+
     dfs = {}
     for tf in TIMEFRAME_WEIGHTS.keys():
         df = await fetch_kucoin_candles(symbol, tf, MAX_OHLCV)
