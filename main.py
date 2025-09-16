@@ -12,6 +12,8 @@ Production-Ready Hybrid Crypto Bot
 # [Imports and config identical to previous version]
 
 TIMEFRAME_WEIGHTS = {"1h": 0.2, "4h": 0.3, "1d": 0.5}  # relative influence on final score
+# --- Test mode flag ---
+TEST_TELEGRAM_MODE = True  # Ако е True, секогаш ќе праќа Telegram порака
 
 # ================= WEIGHTED VOTING (MULTI-TIMEFRAME) =================
 def multi_timeframe_voting(dfs: dict, token: str) -> tuple[str, float]:
@@ -42,9 +44,14 @@ async def analyze_symbol(symbol: str):
 
     key = symbol
     now = datetime.utcnow()
-    change = abs(last_price - last_price_sent.get(key,last_price))/max(last_price_sent.get(key,last_price),1e-9)
-    if change<PRICE_ALERT_THRESHOLD and key in last_price_sent: return
-    if key in last_sent_time and now - last_sent_time[key]<timedelta(minutes=COOLDOWN_MINUTES): return
+    
+    # === Test mode override ===
+    send_alert = TEST_TELEGRAM_MODE or (
+        abs(last_price - last_price_sent.get(key,last_price))/max(last_price_sent.get(key,last_price),1e-9) >= PRICE_ALERT_THRESHOLD
+        and (key not in last_sent_time or now - last_sent_time[key] >= timedelta(minutes=COOLDOWN_MINUTES))
+    )
+    if not send_alert:
+        return
 
     last_price_sent[key] = last_price
     last_sent_time[key] = now
