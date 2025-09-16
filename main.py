@@ -1,13 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Production-Ready Hybrid Crypto Bot for GitHub Actions
-- Multi-Timeframe Weighted Voting: 1h, 4h, 1d
-- Adaptive Weighted Voting + Fib/Harmonics + ATR targets
-- Dynamic thresholds based on ATR
-- Telegram alerts with confidence and cooldown
-- Formatted Telegram messages with 5 decimals
-"""
-
 import asyncio
 from datetime import datetime, timedelta
 import logging
@@ -29,6 +20,7 @@ adaptive_weights = {}
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 # ================= KUCOIN =================
 KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
@@ -42,6 +34,10 @@ CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=BOT_TOKEN)
 
 async def send_telegram(msg: str):
+    if not BOT_TOKEN or not CHAT_ID:
+        logger.error("Telegram token or chat_id is missing!")
+        return
+    logger.info("Sending Telegram message:\n" + msg)
     await bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ================= FETCH KLINES =================
@@ -59,7 +55,7 @@ async def fetch_kucoin_candles(symbol: str, timeframe: str, limit: int):
     df["time"] = pd.to_datetime(df["time"], unit="ms")
     return df
 
-# ================= DUMMY INDICATORS =================
+# ================= INDICATORS =================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ATR"] = (df["high"] - df["low"]).rolling(14).mean()
     return df
@@ -98,8 +94,6 @@ def multi_timeframe_voting(dfs: dict, token: str):
 # ================= ANALYZE SYMBOL =================
 async def analyze_symbol(symbol: str):
     token = symbol.replace("-USDT","")
-
-    # Инициализација на adaptive_weights ако не постои
     if token not in adaptive_weights:
         adaptive_weights[token] = {
             "structure": 0.36,
@@ -150,13 +144,12 @@ async def analyze_symbol(symbol: str):
         f"'exotic': {adaptive_weights[token].get('exotic',0):.5f} }}"
     )
 
-    logger.info(f"Sending Telegram message: {msg}")
-    asyncio.create_task(send_telegram(msg))
+    await send_telegram(msg)
     update_adaptive_weights(token, decision, last_price)
 
 # ================= MAIN LOOP =================
 async def main_loop():
-    symbols = ["BTC-USDT", "ETH-USDT"]  # додај ги сите симболи што сакаш
+    symbols = ["BTC-USDT", "ETH-USDT"]
     tasks = [asyncio.create_task(analyze_symbol(symbol)) for symbol in symbols]
     await asyncio.gather(*tasks)
 
