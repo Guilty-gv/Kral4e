@@ -5,6 +5,7 @@ Production-Ready Hybrid Crypto Bot for GitHub Actions
 - Adaptive Weighted Voting + Fib/Harmonics + ATR targets
 - Dynamic thresholds based on ATR
 - Telegram alerts with confidence and cooldown
+- Formatted Telegram messages with 5 decimals
 """
 
 import asyncio
@@ -17,7 +18,7 @@ from telegram import Bot
 
 # ================= CONFIG =================
 TIMEFRAME_WEIGHTS = {"1h": 0.2, "4h": 0.3, "1d": 0.5}
-TEST_TELEGRAM_MODE = True
+TEST_TELEGRAM_MODE = True  # Forced messages на GitHub
 PRICE_ALERT_THRESHOLD = 0.001
 COOLDOWN_MINUTES = 5
 MAX_OHLCV = 200
@@ -60,21 +61,19 @@ async def fetch_kucoin_candles(symbol: str, timeframe: str, limit: int):
 
 # ================= DUMMY INDICATORS =================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    # Example: add ATR column
     df["ATR"] = (df["high"] - df["low"]).rolling(14).mean()
     return df
 
 def weighted_voting_signals(df: pd.DataFrame, token: str):
-    # Dummy decision and score
     return "HOLD", 0.0
 
 def hybrid_price_targets(df: pd.DataFrame, last_price: float):
-    # Dummy buy/sell/fib levels
     return last_price*0.98, last_price*1.02, [last_price*0.95, last_price*1.05]
 
 def update_adaptive_weights(token: str, decision: str, price: float):
-    # Dummy adaptive weights update
-    adaptive_weights[token] = adaptive_weights.get(token, 1.0)
+    adaptive_weights[token] = adaptive_weights.get(token, {
+        "structure": 0.36, "momentum": 0.24, "volume": 0.14, "candles": 0.16, "exotic": 0.10
+    })
 
 # ================= WEIGHTED VOTING =================
 def multi_timeframe_voting(dfs: dict, token: str):
@@ -103,30 +102,45 @@ async def analyze_symbol(symbol: str):
 
     key = symbol
     now = datetime.utcnow()
+
     send_alert = TEST_TELEGRAM_MODE or (
         abs(last_price - last_price_sent.get(key,last_price)) / max(last_price_sent.get(key,last_price),1e-9) >= PRICE_ALERT_THRESHOLD
         and (key not in last_sent_time or now - last_sent_time[key] >= timedelta(minutes=COOLDOWN_MINUTES))
     )
-    if not send_alert: return
+
+    # Format message with 5 decimals
+    msg = (
+        f"Strategy: Production-Ready Hybrid\n"
+        f"⏰ Time: {now.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+        f"📊 Token: {symbol}\n"
+        f"💰 Last Price: {last_price:.5f}\n"
+        f"✅ Decision: {decision} (Score: {score:.5f})\n"
+        f"🛒 Suggested Buy: {buy:.5f}\n"
+        f"💵 Suggested Sell: {sell:.5f}\n"
+        f"📊 Fib Levels: {{ '0.382': {fibs[0]:.5f}, '0.5': {fibs[1]:.5f}, '0.618': {fibs[2]:.5f} }}\n"
+        f"⚖️ Adaptive Weights: {{ "
+        f"'structure': {adaptive_weights[token].get('structure',0):.5f}, "
+        f"'momentum': {adaptive_weights[token].get('momentum',0):.5f}, "
+        f"'volume': {adaptive_weights[token].get('volume',0):.5f}, "
+        f"'candles': {adaptive_weights[token].get('candles',0):.5f}, "
+        f"'exotic': {adaptive_weights[token].get('exotic',0):.5f} }}"
+    )
+
+    if not send_alert:
+        return
 
     last_price_sent[key] = last_price
     last_sent_time[key] = now
 
-    msg = (f"Strategy: Multi-Timeframe Hybrid Bot\n⏰ {now.strftime('%Y-%m-%d %H:%M:%S')}\n📊 {symbol}\n"
-           f"💰 Last Price: {last_price}\n✅ Decision: {decision} (Score: {round(score,2)})\n"
-           f"🛒 Buy: {buy} | 💵 Sell: {sell}\n📊 Fib Levels: {fibs}\n⚖️ Adaptive Weights: {adaptive_weights.get(token,'N/A')}")
     logger.info(f"Sending Telegram message: {msg}")
-    await send_telegram(msg)
+    asyncio.create_task(send_telegram(msg))
     update_adaptive_weights(token, decision, last_price)
 
 # ================= MAIN LOOP =================
 async def main_loop():
-    symbols = ["BTC-USDT", "ETH-USDT"]  # add more symbols if needed
-    for symbol in symbols:
-        try:
-            await analyze_symbol(symbol)
-        except Exception as e:
-            logger.error(f"Error analyzing {symbol}: {e}")
+    symbols = ["BTC-USDT", "ETH-USDT"]  # додај ги сите симболи што сакаш
+    tasks = [asyncio.create_task(analyze_symbol(symbol)) for symbol in symbols]
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     asyncio.run(main_loop())
