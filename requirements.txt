@@ -8,3 +8,4 @@ xgboost
 ta
 joblib
 filelock
+asyncio
