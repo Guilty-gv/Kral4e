@@ -2,13 +2,13 @@ name: Hybrid Crypto Bot
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ "main" ]   # Автоматски пуштање при push на main
+  workflow_dispatch:        # Рачно стартување од Actions таб
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # максимален time-out за long-running bot
+    timeout-minutes: 360   # максимум 6h (GitHub лимит за job runtime)
 
     steps:
       # 1️⃣ Checkout repository
@@ -36,8 +36,8 @@ jobs:
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
           echo "CHAT_ID=${{ secrets.CHAT_ID }}" >> $GITHUB_ENV
 
-      # 5️⃣ Start Bot
+      # 5️⃣ Run bot
       - name: Start Bot
         run: |
-          echo -e "\033[1;34m===== Starting main bot =====\033[0m"
+          echo -e "\033[1;34m===== Starting Hybrid Crypto Bot =====\033[0m"
           python main.py
