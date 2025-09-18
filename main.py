@@ -7,6 +7,7 @@ Advanced Crypto Trading Bot with Precision Analysis
 - Machine Learning with Random Forest
 - Precision price targets with confidence levels
 - Sophisticated risk management
+- NO TA-LIB DEPENDENCY - Uses pure Python alternatives
 """
 
 import os
@@ -19,15 +20,7 @@ from kucoin.client import Market
 from telegram import Bot
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
-import talib
-from collections import deque
-
-try:
-    import talib
-    TALIB_AVAILABLE = True
-except:
-    import ta
-    TALIB_AVAILABLE = False
+import ta  # Pure Python alternative to TA-Lib
 
 # ================= CONFIG =================
 TOKENS = ["BTC","XRP","LINK","ONDO","AVAX","W","ACH","PEPE","PONKE","ICP",
@@ -119,46 +112,50 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
         logger.error("Error fetching %s: %s", symbol, e)
         return pd.DataFrame()
 
-# ================= INDICATORS =================
+# ================= INDICATORS (NO TA-LIB) =================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     df = df.copy()
-    close, high, low, vol = df["close"].values, df["high"].values, df["low"].values, df["volume"].values
-
-    # Basic indicators
-    if TALIB_AVAILABLE:
-        df["EMA_20"] = talib.EMA(close, 20)
-        df["EMA_50"] = talib.EMA(close, 50)
-        df["EMA_100"] = talib.EMA(close, 100)
-        df["EMA_200"] = talib.EMA(close, 200)
-        df["SMA_50"] = talib.SMA(close, 50)
-        df["SMA_200"] = talib.SMA(close, 200)
-        df["RSI"] = talib.RSI(close, RSI_PERIOD)
-        df["OBV"] = talib.OBV(close, vol)
-        df["ATR"] = talib.ATR(high, low, close, ATR_PERIOD)
-        df["MACD"], df["MACD_signal"], df["MACD_hist"] = talib.MACD(close)
-        df["STOCH_K"], df["STOCH_D"] = talib.STOCH(high, low, close, fastk_period=STOCH_PERIOD, slowk_period=3, slowd_period=3)
-        df["BB_upper"], df["BB_middle"], df["BB_lower"] = talib.BBANDS(close, timeperiod=BB_PERIOD)
-        df["ADX"] = talib.ADX(high, low, close, timeperiod=14)
-    else:
-        df["EMA_20"] = df["close"].ewm(span=20).mean()
-        df["EMA_50"] = df["close"].ewm(span=50).mean()
-        df["EMA_100"] = df["close"].ewm(span=100).mean()
-        df["EMA_200"] = df["close"].ewm(span=200).mean()
-        df["SMA_50"] = df["close"].rolling(50).mean()
-        df["SMA_200"] = df["close"].rolling(200).mean()
-        df["RSI"] = ta.momentum.RSIIndicator(df["close"], RSI_PERIOD).rsi()
-        df["ATR"] = df["close"].diff().abs().rolling(ATR_PERIOD).mean()
-        df["OBV"] = (np.sign(df["close"].diff()) * df["volume"]).fillna(0).cumsum()
-        df["MACD"] = ta.trend.MACD(df["close"]).macd()
-        df["MACD_signal"] = ta.trend.MACD(df["close"]).macd_signal()
-        df["STOCH_K"] = ta.momentum.StochasticOscillator(df["high"], df["low"], df["close"], window=STOCH_PERIOD).stoch()
-        df["STOCH_D"] = ta.momentum.StochasticOscillator(df["high"], df["low"], df["close"], window=STOCH_PERIOD).stoch_signal()
-        bb = ta.volatility.BollingerBands(df["close"], window=BB_PERIOD)
-        df["BB_upper"] = bb.bollinger_hband()
-        df["BB_middle"] = bb.bollinger_mavg()
-        df["BB_lower"] = bb.bollinger_lband()
+    
+    # EMA indicators
+    df["EMA_20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["EMA_50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["EMA_100"] = df["close"].ewm(span=100, adjust=False).mean()
+    df["EMA_200"] = df["close"].ewm(span=200, adjust=False).mean()
+    
+    # SMA indicators
+    df["SMA_50"] = df["close"].rolling(50).mean()
+    df["SMA_200"] = df["close"].rolling(200).mean()
+    
+    # RSI
+    df["RSI"] = ta.momentum.RSIIndicator(df["close"], window=RSI_PERIOD).rsi()
+    
+    # OBV
+    df["OBV"] = ta.volume.OnBalanceVolumeIndicator(df["close"], df["volume"]).on_balance_volume()
+    
+    # ATR
+    df["ATR"] = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=ATR_PERIOD).average_true_range()
+    
+    # MACD
+    macd = ta.trend.MACD(df["close"])
+    df["MACD"] = macd.macd()
+    df["MACD_signal"] = macd.macd_signal()
+    df["MACD_hist"] = macd.macd_diff()
+    
+    # Stochastic
+    stoch = ta.momentum.StochasticOscillator(df["high"], df["low"], df["close"], window=STOCH_PERIOD)
+    df["STOCH_K"] = stoch.stoch()
+    df["STOCH_D"] = stoch.stoch_signal()
+    
+    # Bollinger Bands
+    bb = ta.volatility.BollingerBands(df["close"], window=BB_PERIOD)
+    df["BB_upper"] = bb.bollinger_hband()
+    df["BB_middle"] = bb.bollinger_mavg()
+    df["BB_lower"] = bb.bollinger_lband()
+    
+    # ADX
+    df["ADX"] = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14).adx()
     
     # Supertrend indicator
     df = add_supertrend(df, SUPERTREND_PERIOD, SUPERTREND_MULTIPLIER)
@@ -176,11 +173,8 @@ def add_supertrend(df, period=10, multiplier=3):
     low = df['low']
     close = df['close']
     
-    # Calculate ATR
-    if TALIB_AVAILABLE:
-        atr = talib.ATR(high, low, close, timeperiod=period)
-    else:
-        atr = ta.volatility.AverageTrueRange(high, low, close, window=period).average_true_range()
+    # Calculate ATR using ta library
+    atr = ta.volatility.AverageTrueRange(high, low, close, window=period).average_true_range()
     
     # Calculate basic upper and lower bands
     hl2 = (high + low) / 2
