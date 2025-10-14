@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Advanced Crypto Trading Bot with Precision Analysis
-- Multi-timeframe analysis with weighted signals  
+- Multi-timeframe analysis with weighted signals
 - Advanced indicators: Volume Profile, VWAP, Divergence, Harmonic Patterns
 - Elliott Wave theory integration
 - Machine Learning with Random Forest
@@ -126,7 +126,6 @@ async def send_telegram(msg: str):
         return False
         
     try:
-        logger.info(f"📨 Attempting to send Telegram message...")
         await bot.send_message(chat_id=CHAT_ID, text=msg)
         logger.info("✅ Telegram message sent successfully!")
         return True
@@ -145,20 +144,19 @@ def smart_round(value: float) -> float:
 # ================= FETCH CANDLES =================
 async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     if market_client is None:
-        logger.warning(f"❌ KuCoin client not available for {symbol} - using mock data")
-        return generate_mock_data(symbol, limit)
+        logger.error(f"❌ KuCoin client not available for {symbol}")
+        return pd.DataFrame()
         
     interval_map = {"1d": "1day", "4h": "4hour", "1h": "1hour", "1w": "1week", "15m": "15min"}
     interval = interval_map.get(tf, "1day")
     loop = asyncio.get_running_loop()
     try:
-        logger.info(f"🔍 Fetching data for {symbol} ({tf})...")
         candles = await loop.run_in_executor(
             None, lambda: market_client.get_kline(symbol, interval, limit=limit)
         )
         if not candles:
-            logger.warning(f"❌ No data returned for {symbol} - using mock data")
-            return generate_mock_data(symbol, limit)
+            logger.error(f"❌ No data returned for {symbol}")
+            return pd.DataFrame()
         
         df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
         for col in ["open", "close", "high", "low", "volume"]:
@@ -166,61 +164,12 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
         df = df.dropna(subset=["close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
         
-        logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}")
+        logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}. Last price: ${df['close'].iloc[-1]:.2f}")
         return df.sort_values("timestamp").reset_index(drop=True)[["timestamp", "open", "high", "low", "close", "volume"]]
     except Exception as e:
         logger.error(f"❌ Error fetching {symbol}: {e}")
-        return generate_mock_data(symbol, limit)
+        return pd.DataFrame()
 
-# ================= MOCK DATA FOR TESTING =================
-def generate_mock_data(symbol: str, periods: int = 100):
-    """Generate mock price data for testing when API is not available"""
-    logger.info(f"🔄 Generating mock data for {symbol}")
-    dates = pd.date_range(end=datetime.now(), periods=periods, freq='1D')
-    
-    # Start with a realistic price based on symbol
-    base_prices = {
-        "BTC-USDT": 50000,
-        "ETH-USDT": 3000,
-        "XRP-USDT": 0.5,
-        "HBAR-USDT": 0.08,
-        "LINK-USDT": 15,
-        "ONDO-USDT": 0.8,
-        "W-USDT": 0.6,
-        "ACH-USDT": 0.03,
-        "FET-USDT": 0.4,
-        "AVAX-USDT": 30
-    }
-    
-    base_price = base_prices.get(symbol, 10)
-    
-    # Generate realistic price movement with some volatility
-    np.random.seed(hash(symbol) % 10000)  # Consistent seed per symbol
-    returns = np.random.normal(0.001, 0.02, periods)  # 0.1% mean, 2% std
-    prices = base_price * (1 + returns).cumprod()
-    
-    # Generate OHLC data
-    data = []
-    for i, date in enumerate(dates):
-        close = prices[i]
-        open_price = close * (1 + np.random.normal(0, 0.005))
-        high = max(open_price, close) * (1 + abs(np.random.normal(0, 0.01)))
-        low = min(open_price, close) * (1 - abs(np.random.normal(0, 0.01)))
-        volume = np.random.lognormal(10, 1)
-        
-        data.append({
-            'timestamp': date,
-            'open': max(open_price, low),
-            'high': high,
-            'low': low,
-            'close': close,
-            'volume': volume
-        })
-    
-    return pd.DataFrame(data)
-
-# ================= [REST OF THE INDICATOR FUNCTIONS REMAIN THE SAME] =================
-# [Все остальные функции индикаторов остаются без изменений - они уже работают правильно]
 # ================= INDICATORS (NO TA-LIB) =================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -883,8 +832,7 @@ async def multi_timeframe_analysis(symbol: str):
     for tf in TIMEFRAMES:
         df = await fetch_kucoin_candles(symbol, tf, MAX_OHLCV)
         if df.empty:
-            # Use mock data if API fails
-            df = generate_mock_data(symbol, 100)
+            continue
         
         df = add_indicators(df).dropna()
         if len(df) < 50:  # Need enough data
@@ -919,15 +867,16 @@ async def enhanced_analyze_symbol(symbol: str):
     # Земи податоци од повеќе тајмфрејмови
     daily_df = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
     if daily_df.empty:
-        # Use mock data if API fails
-        daily_df = generate_mock_data(symbol, 100)
-        logger.info(f"Using mock data for {symbol}")
+        logger.error(f"❌ No data available for {symbol} - skipping")
+        return None
     
     daily_df = add_indicators(daily_df).dropna()
     if len(daily_df) < 50:
+        logger.error(f"❌ Not enough data for {symbol} - skipping")
         return None
     
     current_price = daily_df["close"].iloc[-1]
+    logger.info(f"💰 {symbol} current price: ${current_price:.2f}")
     
     # Пресметај ги сите индикатори
     volume_profile = calculate_volume_profile(daily_df)
@@ -1062,8 +1011,6 @@ async def continuous_monitor():
     for sym in TOKENS:
         symbol = sym + "-USDT"
         df = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
-        if df.empty:
-            df = generate_mock_data(symbol, 100)
         if not df.empty:
             train_ml_model(df, sym)
     
@@ -1074,30 +1021,33 @@ async def continuous_monitor():
             try:
                 report = await enhanced_analyze_symbol(symbol)
                 if report and report['signal']['direction'] != 'HOLD':
-                    # Prepare message
+                    # Prepare message - SIMPLIFIED without unnecessary info
                     signal = report['signal']
-                    msg = (f"🔔 CRYPTO SIGNAL ALERT\n"
-                           f"⏰ {now_str()}\n📊 {symbol}\n💰 Current Price: {report['current_price']:.4f}\n\n"
-                           f"🎯 SIGNAL: {signal['direction']} ({signal['strength']}/10 strength)\n"
-                           f"📈 Trend: {report['trend']}\n\n")
                     
+                    # Use emojis based on signal strength and direction
+                    strength_emoji = "🔴" if signal['strength'] < 4 else "🟡" if signal['strength'] < 7 else "🟢"
+                    direction_emoji = "🟢" if signal['direction'] == "BUY" else "🔴" if signal['direction'] == "SELL" else "🟡"
+                    
+                    msg = (f"{direction_emoji} **{signal['direction']} SIGNAL** {direction_emoji}\n"
+                           f"📊 **{symbol}**\n"
+                           f"💰 **Current: ${report['current_price']:.2f}**\n"
+                           f"💪 Strength: {signal['strength']}/10\n"
+                           f"📈 Trend: {report['trend']}\n")
+                    
+                    # Add targets only if they exist
                     if signal['buy_targets']:
-                        msg += "🎯 BUY TARGETS:\n"
-                        for i, (name, price, confidence) in enumerate(signal['buy_targets'], 1):
-                            msg += f"{i}. {name} @ ${price:.4f} ({int(confidence*100)}% confidence)\n"
+                        msg += f"\n🎯 **BUY TARGETS:**\n"
+                        for i, (name, price, confidence) in enumerate(signal['buy_targets'][:3], 1):
+                            msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
                     
                     if signal['sell_targets']:
-                        msg += "\n🎯 SELL TARGETS:\n"
-                        for i, (name, price, confidence) in enumerate(signal['sell_targets'], 1):
-                            msg += f"{i}. {name} @ ${price:.4f} ({int(confidence*100)}% confidence)\n"
+                        msg += f"\n🎯 **SELL TARGETS:**\n"
+                        for i, (name, price, confidence) in enumerate(signal['sell_targets'][:3], 1):
+                            msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
                     
-                    # Add additional info
-                    msg += f"\n📊 Additional Info:\n"
-                    if 'RSI' in report:
-                        msg += f"- RSI: {report['RSI']:.1f}\n"
-                    
+                    # Add additional info only if relevant
                     if report['divergences']:
-                        msg += f"- {len(report['divergences'])} divergence(s) detected\n"
+                        msg += f"\n⚠️ {len(report['divergences'])} divergence(s)"
                     
                     # Check if we should send alert
                     now = datetime.utcnow()
@@ -1122,32 +1072,24 @@ async def continuous_monitor():
         await asyncio.sleep(300)  # Check every 5 minutes
 
 async def github_actions_production():
-    """Production режим за GitHub Actions со вистински податоци и Telegram"""
-    logger.info("🚀 Starting PRODUCTION analysis with real data in GitHub Actions...")
-    
-    # Send startup message
-    startup_msg = "🤖 **Crypto Bot Started**\n⏰ GitHub Actions\n📊 Analyzing 10 tokens\n🔍 Using real KuCoin data"
-    await send_telegram(startup_msg)
+    """Production режим за GitHub Actions со вистински податоци и Telegram - SIMPLIFIED"""
+    logger.info("🚀 Starting analysis with real market data...")
     
     # Train ML models with real data
-    logger.info("📚 Training ML models with real data...")
-    trained_models = 0
+    logger.info("📚 Training ML models...")
     for sym in TOKENS:
         symbol = sym + "-USDT"
         try:
             df = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
             if not df.empty:
                 train_ml_model(df, sym)
-                trained_models += 1
                 logger.info(f"✅ Trained model for {symbol}")
-            else:
-                logger.warning(f"❌ No data for {symbol}")
         except Exception as e:
             logger.error(f"Error training {symbol}: {e}")
     
-    # Analyze all tokens and send signals
-    logger.info("🔍 Analyzing tokens and sending signals...")
-    signals_sent = 0
+    # Analyze all tokens and send ONLY meaningful signals
+    logger.info("🔍 Analyzing tokens...")
+    strong_signals = 0
     
     for sym in TOKENS:
         symbol = sym + "-USDT"
@@ -1156,45 +1098,43 @@ async def github_actions_production():
             if report:
                 signal = report['signal']
                 
-                # Create signal message
-                strength_emoji = "🔴" if signal['strength'] < 3 else "🟡" if signal['strength'] < 7 else "🟢"
-                direction_emoji = "🟢" if signal['direction'] == "BUY" else "🔴" if signal['direction'] == "SELL" else "🟡"
-                
-                msg = (f"{strength_emoji} **CRYPTO SIGNAL** {strength_emoji}\n"
-                       f"⏰ {now_str()}\n"
-                       f"📊 **{symbol}**\n"
-                       f"💰 Price: ${report['current_price']:.4f}\n"
-                       f"{direction_emoji} **Signal: {signal['direction']}**\n"
-                       f"💪 Strength: {signal['strength']}/10\n"
-                       f"📈 Trend: {report['trend']}\n"
-                       f"🤖 Source: GitHub Actions\n"
-                       f"🔍 Confidence: {signal['confidence']:.1%}")
-                
-                # Add targets if available
-                if signal['buy_targets']:
-                    msg += f"\n🛒 Buy Targets: {len(signal['buy_targets'])}"
-                if signal['sell_targets']:
-                    msg += f"\n💰 Sell Targets: {len(signal['sell_targets'])}"
-                
-                # Send message
-                success = await send_telegram(msg)
-                if success:
-                    signals_sent += 1
-                    logger.info(f"📨 Sent Telegram signal for {symbol}: {signal['direction']}")
+                # Send message ONLY for strong signals (strength >= 5)
+                if signal['strength'] >= 5:
+                    # Create clean signal message
+                    direction_emoji = "🟢" if signal['direction'] == "BUY" else "🔴" if signal['direction'] == "SELL" else "🟡"
+                    
+                    msg = (f"{direction_emoji} **{signal['direction']} SIGNAL** {direction_emoji}\n"
+                           f"📊 **{symbol}**\n"
+                           f"💰 **Price: ${report['current_price']:.2f}**\n"
+                           f"💪 Strength: {signal['strength']}/10\n"
+                           f"📈 Trend: {report['trend']}")
+                    
+                    # Add targets if available
+                    if signal['buy_targets']:
+                        msg += f"\n\n🎯 **BUY TARGETS:**\n"
+                        for i, (name, price, confidence) in enumerate(signal['buy_targets'][:3], 1):
+                            msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
+                    
+                    if signal['sell_targets']:
+                        msg += f"\n🎯 **SELL TARGETS:**\n"
+                        for i, (name, price, confidence) in enumerate(signal['sell_targets'][:3], 1):
+                            msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
+                    
+                    # Send message
+                    success = await send_telegram(msg)
+                    if success:
+                        strong_signals += 1
+                        logger.info(f"📨 Sent signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
+                    
+                    # Wait between messages
+                    await asyncio.sleep(2)
                 else:
-                    logger.error(f"❌ Failed to send Telegram signal for {symbol}")
-                
-                # Wait between messages to avoid rate limiting
-                await asyncio.sleep(2)
+                    logger.info(f"⏭️  Skipping weak signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
                 
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}")
     
-    # Send summary
-    summary_msg = f"📊 **Analysis Complete**\n✅ Trained: {trained_models} models\n📨 Signals: {signals_sent} sent\n🎯 Tokens: {len(TOKENS)} analyzed"
-    await send_telegram(summary_msg)
-    
-    logger.info(f"🎉 GitHub Actions production completed! Sent {signals_sent} signals")
+    logger.info(f"✅ Analysis completed. Strong signals found: {strong_signals}")
     return True
 
 # ================= MAIN EXECUTION =================
@@ -1211,36 +1151,32 @@ if __name__ == "__main__":
         os.getenv("CHAT_ID")
     ])
     
-    logger.info(f"🔧 Environment: {'GitHub Actions' if is_github_actions else 'Local'}")
-    logger.info(f"🔑 API Keys: {'Available' if has_api_keys else 'Missing'}")
-    
     if is_github_actions:
         if has_api_keys:
-            logger.info("🚀 Starting PRODUCTION mode in GitHub Actions")
+            logger.info("🚀 Starting analysis with real market data")
             try:
                 # Run production analysis with 5 minute timeout
                 result = asyncio.run(asyncio.wait_for(github_actions_production(), timeout=300))
                 if result:
-                    logger.info("✅ GitHub Actions production completed successfully!")
+                    logger.info("✅ Analysis completed successfully!")
                     exit(0)
                 else:
-                    logger.error("❌ GitHub Actions production failed")
+                    logger.error("❌ Analysis failed")
                     exit(1)
             except asyncio.TimeoutError:
-                logger.warning("⏰ GitHub Actions timed out (5 minutes)")
+                logger.warning("⏰ Analysis timed out")
                 exit(0)
             except Exception as e:
-                logger.error(f"💥 GitHub Actions failed: {e}")
+                logger.error(f"💥 Analysis failed: {e}")
                 exit(1)
         else:
-            logger.error("❌ Missing API keys in GitHub Actions")
+            logger.error("❌ Missing API keys")
             exit(1)
     else:
         # Local execution
         if has_api_keys:
-            logger.info("🚀 Starting LOCAL PRODUCTION mode")
+            logger.info("🚀 Starting local analysis")
             asyncio.run(continuous_monitor())
         else:
-            logger.error("❌ Missing API keys for local production")
-            logger.info("💡 Set environment variables or run in GitHub Actions")
+            logger.error("❌ Missing API keys for local execution")
             exit(1)
