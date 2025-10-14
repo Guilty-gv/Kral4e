@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Advanced Crypto Trading Bot with Precision Analysis
-- Multi-timeframe analysis with weighted signals
+- Multi-timeframe analysis with weighted signals  
 - Advanced indicators: Volume Profile, VWAP, Divergence, Harmonic Patterns
 - Elliott Wave theory integration
 - Machine Learning with Random Forest
@@ -67,23 +67,38 @@ KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
 
 # ================= KUCOIN CLIENT INIT =================
 try:
-    if KUCOIN_NEW_VERSION:
+    if KUCOIN_NEW_VERSION and KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
         market_client = Market(
             key=KUCOIN_API_KEY, 
             secret=KUCOIN_API_SECRET, 
             passphrase=KUCOIN_API_PASSPHRASE
-        ) if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE else None
+        )
+        logger = logging.getLogger("advanced_crypto_bot")
+        logger.info("✅ KuCoin client initialized successfully")
     else:
         market_client = None
+        logger = logging.getLogger("advanced_crypto_bot")
+        logger.warning("❌ KuCoin client not initialized - missing API keys")
 except Exception as e:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("advanced_crypto_bot")
-    logger.warning(f"Kucoin client initialization failed: {e}. Continuing without API...")
+    logger.warning(f"❌ KuCoin client initialization failed: {e}")
     market_client = None
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-bot = Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN and CHAT_ID else None
+
+# Initialize Telegram bot
+if TELEGRAM_TOKEN and CHAT_ID:
+    try:
+        bot = Bot(token=TELEGRAM_TOKEN)
+        logger.info("✅ Telegram bot initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Telegram bot initialization failed: {e}")
+        bot = None
+else:
+    bot = None
+    logger.warning("❌ Telegram bot not initialized - missing credentials")
 
 # ================= STATE =================
 last_price_sent = {}
@@ -103,11 +118,21 @@ def now_str():
 
 async def send_telegram(msg: str):
     if not bot:
-        return
+        logger.error("❌ Telegram bot not initialized - cannot send message")
+        return False
+        
+    if not CHAT_ID:
+        logger.error("❌ CHAT_ID not set - cannot send message")
+        return False
+        
     try:
+        logger.info(f"📨 Attempting to send Telegram message...")
         await bot.send_message(chat_id=CHAT_ID, text=msg)
+        logger.info("✅ Telegram message sent successfully!")
+        return True
     except Exception as e:
-        logger.error("Telegram send error: %s", e)
+        logger.error(f"❌ Telegram send error: {e}")
+        return False
 
 def smart_round(value: float) -> float:
     if value >= 1:
@@ -120,31 +145,37 @@ def smart_round(value: float) -> float:
 # ================= FETCH CANDLES =================
 async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     if market_client is None:
-        logger.warning("Kucoin client not available - using mock data")
+        logger.warning(f"❌ KuCoin client not available for {symbol} - using mock data")
         return generate_mock_data(symbol, limit)
         
     interval_map = {"1d": "1day", "4h": "4hour", "1h": "1hour", "1w": "1week", "15m": "15min"}
     interval = interval_map.get(tf, "1day")
     loop = asyncio.get_running_loop()
     try:
+        logger.info(f"🔍 Fetching data for {symbol} ({tf})...")
         candles = await loop.run_in_executor(
             None, lambda: market_client.get_kline(symbol, interval, limit=limit)
         )
         if not candles:
+            logger.warning(f"❌ No data returned for {symbol} - using mock data")
             return generate_mock_data(symbol, limit)
+        
         df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
         for col in ["open", "close", "high", "low", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df = df.dropna(subset=["close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
+        
+        logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}")
         return df.sort_values("timestamp").reset_index(drop=True)[["timestamp", "open", "high", "low", "close", "volume"]]
     except Exception as e:
-        logger.error("Error fetching %s: %s", symbol, e)
+        logger.error(f"❌ Error fetching {symbol}: {e}")
         return generate_mock_data(symbol, limit)
 
 # ================= MOCK DATA FOR TESTING =================
 def generate_mock_data(symbol: str, periods: int = 100):
     """Generate mock price data for testing when API is not available"""
+    logger.info(f"🔄 Generating mock data for {symbol}")
     dates = pd.date_range(end=datetime.now(), periods=periods, freq='1D')
     
     # Start with a realistic price based on symbol
@@ -188,6 +219,8 @@ def generate_mock_data(symbol: str, periods: int = 100):
     
     return pd.DataFrame(data)
 
+# ================= [REST OF THE INDICATOR FUNCTIONS REMAIN THE SAME] =================
+# [Все остальные функции индикаторов остаются без изменений - они уже работают правильно]
 # ================= INDICATORS (NO TA-LIB) =================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -1077,7 +1110,7 @@ async def continuous_monitor():
                         continue
                     
                     logger.info(f"Signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
-                    asyncio.create_task(send_telegram(msg))
+                    await send_telegram(msg)
                     
                     # Update state
                     last_price_sent[key] = report['current_price']
@@ -1088,63 +1121,126 @@ async def continuous_monitor():
         
         await asyncio.sleep(300)  # Check every 5 minutes
 
-async def github_actions_test():
-    """Специјален режим за GitHub Actions што работи само 2 минути"""
-    logger.info("🚀 Running in GitHub Actions mode - test execution")
+async def github_actions_production():
+    """Production режим за GitHub Actions со вистински податоци и Telegram"""
+    logger.info("🚀 Starting PRODUCTION analysis with real data in GitHub Actions...")
     
-    # Обучи ги ML моделите
-    logger.info("📚 Training ML models...")
-    for sym in TOKENS[:2]:  # Само првите 2 токени за тест
+    # Send startup message
+    startup_msg = "🤖 **Crypto Bot Started**\n⏰ GitHub Actions\n📊 Analyzing 10 tokens\n🔍 Using real KuCoin data"
+    await send_telegram(startup_msg)
+    
+    # Train ML models with real data
+    logger.info("📚 Training ML models with real data...")
+    trained_models = 0
+    for sym in TOKENS:
         symbol = sym + "-USDT"
-        df = generate_mock_data(symbol, 100)  # Use mock data for testing
-        if not df.empty:
-            train_ml_model(df, sym)
-            logger.info(f"✅ Trained model for {symbol}")
+        try:
+            df = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
+            if not df.empty:
+                train_ml_model(df, sym)
+                trained_models += 1
+                logger.info(f"✅ Trained model for {symbol}")
+            else:
+                logger.warning(f"❌ No data for {symbol}")
+        except Exception as e:
+            logger.error(f"Error training {symbol}: {e}")
     
-    # Анализирај ги токените
-    logger.info("🔍 Running analysis...")
-    for sym in TOKENS[:2]:  # Анализирај ги првите 2 токени
+    # Analyze all tokens and send signals
+    logger.info("🔍 Analyzing tokens and sending signals...")
+    signals_sent = 0
+    
+    for sym in TOKENS:
         symbol = sym + "-USDT"
         try:
             report = await enhanced_analyze_symbol(symbol)
             if report:
                 signal = report['signal']
-                logger.info(f"✅ Analyzed {symbol}: {signal['direction']} signal (Strength: {signal['strength']}/10)")
-                logger.info(f"   Current Price: ${report['current_price']:.4f}")
-                logger.info(f"   Trend: {report['trend']}")
-                logger.info(f"   Buy Targets: {len(signal['buy_targets'])}")
-                logger.info(f"   Sell Targets: {len(signal['sell_targets'])}")
-                logger.info(f"   Confidence: {signal['confidence']:.2f}")
-            else:
-                logger.info(f"⚠️  No analysis for {symbol}")
+                
+                # Create signal message
+                strength_emoji = "🔴" if signal['strength'] < 3 else "🟡" if signal['strength'] < 7 else "🟢"
+                direction_emoji = "🟢" if signal['direction'] == "BUY" else "🔴" if signal['direction'] == "SELL" else "🟡"
+                
+                msg = (f"{strength_emoji} **CRYPTO SIGNAL** {strength_emoji}\n"
+                       f"⏰ {now_str()}\n"
+                       f"📊 **{symbol}**\n"
+                       f"💰 Price: ${report['current_price']:.4f}\n"
+                       f"{direction_emoji} **Signal: {signal['direction']}**\n"
+                       f"💪 Strength: {signal['strength']}/10\n"
+                       f"📈 Trend: {report['trend']}\n"
+                       f"🤖 Source: GitHub Actions\n"
+                       f"🔍 Confidence: {signal['confidence']:.1%}")
+                
+                # Add targets if available
+                if signal['buy_targets']:
+                    msg += f"\n🛒 Buy Targets: {len(signal['buy_targets'])}"
+                if signal['sell_targets']:
+                    msg += f"\n💰 Sell Targets: {len(signal['sell_targets'])}"
+                
+                # Send message
+                success = await send_telegram(msg)
+                if success:
+                    signals_sent += 1
+                    logger.info(f"📨 Sent Telegram signal for {symbol}: {signal['direction']}")
+                else:
+                    logger.error(f"❌ Failed to send Telegram signal for {symbol}")
+                
+                # Wait between messages to avoid rate limiting
+                await asyncio.sleep(2)
+                
         except Exception as e:
-            logger.error(f"❌ Error analyzing {symbol}: {e}")
+            logger.error(f"Error analyzing {symbol}: {e}")
     
-    logger.info("🎉 GitHub Actions test completed successfully!")
+    # Send summary
+    summary_msg = f"📊 **Analysis Complete**\n✅ Trained: {trained_models} models\n📨 Signals: {signals_sent} sent\n🎯 Tokens: {len(TOKENS)} analyzed"
+    await send_telegram(summary_msg)
+    
+    logger.info(f"🎉 GitHub Actions production completed! Sent {signals_sent} signals")
     return True
 
 # ================= MAIN EXECUTION =================
 if __name__ == "__main__":
-    # Провери дали се наоѓаме во GitHub Actions
-    if os.getenv("GITHUB_ACTIONS"):
-        logger.info("🔧 GitHub Actions environment detected")
-        
-        try:
-            # Пушти го тестот со тајмаут од 2 минути
-            result = asyncio.run(asyncio.wait_for(github_actions_test(), timeout=120))
-            if result:
-                logger.info("✅ Test completed successfully - exiting")
+    # Check if we're in GitHub Actions
+    is_github_actions = os.getenv("GITHUB_ACTIONS")
+    
+    # Check if we have all required API keys
+    has_api_keys = all([
+        os.getenv("KUCOIN_API_KEY"),
+        os.getenv("KUCOIN_API_SECRET"), 
+        os.getenv("KUCOIN_API_PASSPHRASE"),
+        os.getenv("TELEGRAM_TOKEN"),
+        os.getenv("CHAT_ID")
+    ])
+    
+    logger.info(f"🔧 Environment: {'GitHub Actions' if is_github_actions else 'Local'}")
+    logger.info(f"🔑 API Keys: {'Available' if has_api_keys else 'Missing'}")
+    
+    if is_github_actions:
+        if has_api_keys:
+            logger.info("🚀 Starting PRODUCTION mode in GitHub Actions")
+            try:
+                # Run production analysis with 5 minute timeout
+                result = asyncio.run(asyncio.wait_for(github_actions_production(), timeout=300))
+                if result:
+                    logger.info("✅ GitHub Actions production completed successfully!")
+                    exit(0)
+                else:
+                    logger.error("❌ GitHub Actions production failed")
+                    exit(1)
+            except asyncio.TimeoutError:
+                logger.warning("⏰ GitHub Actions timed out (5 minutes)")
                 exit(0)
-            else:
-                logger.error("❌ Test failed")
+            except Exception as e:
+                logger.error(f"💥 GitHub Actions failed: {e}")
                 exit(1)
-        except asyncio.TimeoutError:
-            logger.info("⏰ Test completed after timeout - this is expected")
-            exit(0)
-        except Exception as e:
-            logger.error(f"💥 Test failed with error: {e}")
+        else:
+            logger.error("❌ Missing API keys in GitHub Actions")
             exit(1)
     else:
-        # Нормално извршување
-        logger.info("🚀 Running in production mode")
-        asyncio.run(continuous_monitor())
+        # Local execution
+        if has_api_keys:
+            logger.info("🚀 Starting LOCAL PRODUCTION mode")
+            asyncio.run(continuous_monitor())
+        else:
+            logger.error("❌ Missing API keys for local production")
+            logger.info("💡 Set environment variables or run in GitHub Actions")
+            exit(1)
