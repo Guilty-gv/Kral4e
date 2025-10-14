@@ -1,43 +1,32 @@
-name: Hybrid Crypto Bot
+name: Crypto Trading Bot
 
 on:
-  push:
-    branches: [ "main" ]   # Автоматски пуштање при push на main
-  workflow_dispatch:        # Рачно стартување од Actions таб
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # максимум 6h (GitHub лимит за job runtime)
+    env:
+      KUCOIN_API_KEY: ${{ secrets.KUCOIN_API_KEY }}
+      KUCOIN_API_SECRET: ${{ secrets.KUCOIN_API_SECRET }}
+      KUCOIN_API_PASSPHRASE: ${{ secrets.KUCOIN_API_PASSPHRASE }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
+      GITHUB_ACTIONS: "true"
 
     steps:
-      # 1️⃣ Checkout repository
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Python
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.10"
 
-      # 3️⃣ Install dependencies
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      # 4️⃣ Export environment variables (KuCoin и Telegram)
-      - name: Export environment variables
-        run: |
-          echo "KUCOIN_API_KEY=${{ secrets.KUCOIN_API_KEY }}" >> $GITHUB_ENV
-          echo "KUCOIN_API_SECRET=${{ secrets.KUCOIN_API_SECRET }}" >> $GITHUB_ENV
-          echo "KUCOIN_API_PASSPHRASE=${{ secrets.KUCOIN_API_PASSPHRASE }}" >> $GITHUB_ENV
-          echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
-          echo "CHAT_ID=${{ secrets.CHAT_ID }}" >> $GITHUB_ENV
-
-      # 5️⃣ Run bot
-      - name: Start Bot
-        run: |
-          echo -e "\033[1;34m===== Starting Hybrid Crypto Bot =====\033[0m"
-          python main.py
+      - name: Run Crypto Bot
+        run: python main.py
