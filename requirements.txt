@@ -8,4 +8,4 @@ harmonics
 xgboost
 joblib
 filelock
-python-dotenv>=1.0.0
+
