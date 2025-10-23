@@ -87,20 +87,36 @@ KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
 KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
 
 market_client = None
-if KUCOIN_NEW_VERSION and KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
-    try:
+try:
+    from kucoin.client import Client
+    
+    if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
+        # For python-kucoin version 2.2.0 - use positional arguments
         market_client = Client(
-            key=KUCOIN_API_KEY, 
-            secret=KUCOIN_API_SECRET, 
-            passphrase=KUCOIN_API_PASSPHRASE
+            KUCOIN_API_KEY,           # api_key (positional)
+            KUCOIN_API_SECRET,        # api_secret (positional) 
+            KUCOIN_API_PASSPHRASE     # api_passphrase (positional)
         )
-        logger.info("✅ KuCoin client initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ KuCoin client initialization failed: {e}")
-        market_client = None
-else:
-    logger.warning("❌ KuCoin client not initialized - missing API keys or incompatible version")
-
+        logger.info("✅ KuCoin client initialized successfully (v2.2.0)")
+        
+        # Test the connection
+        try:
+            # Simple API call to verify connection
+            server_time = market_client.get_server_timestamp()
+            logger.info(f"✅ KuCoin connection test passed - Server time: {server_time}")
+        except Exception as e:
+            logger.error(f"❌ KuCoin connection test failed: {e}")
+            market_client = None
+            
+    else:
+        logger.warning("❌ KuCoin client not initialized - missing API keys")
+        
+except ImportError as e:
+    logger.error(f"❌ Cannot import Kucoin client: {e}")
+    market_client = None
+except Exception as e:
+    logger.error(f"❌ KuCoin client initialization failed: {e}")
+    market_client = None
 # ================= TELEGRAM BOT INIT =================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
