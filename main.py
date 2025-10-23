@@ -208,7 +208,7 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
         # Sort by timestamp and return
         df = df.sort_values("timestamp").reset_index(drop=True)
         
-        logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}. Last price: ${df['close'].iloc[-1]:.2f}")
+        logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}. Last price: ${df['close'].iloc[-1]:.6f}")
         return df[["timestamp", "open", "high", "low", "close", "volume"]]
         
     except Exception as e:
@@ -775,7 +775,7 @@ async def enhanced_analyze_symbol(symbol: str):
             return None
         
         current_price = daily_df["close"].iloc[-1]
-        logger.info(f"💰 {symbol} current price: ${current_price:.2f}, Valid data points: {len(daily_df)}")
+        logger.info(f"💰 {symbol} current price: ${current_price:.6f}, Valid data points: {len(daily_df)}")
         
         # Calculate basic indicators only
         volume_profile = calculate_volume_profile(daily_df.tail(50))  # Use last 50 points
@@ -886,7 +886,7 @@ async def github_actions_production():
             try:
                 df = await fetch_kucoin_candles(symbol, "1d", 200)
                 if not df.empty:
-                    logger.info(f"📈 Data for {symbol}: {len(df)} candles, last price: ${df['close'].iloc[-1]:.2f}")
+                    logger.info(f"📈 Data for {symbol}: {len(df)} candles, last price: ${df['close'].iloc[-1]:.6f}")
                     train_ml_model(df, sym)
                     logger.info(f"✅ Trained model for {symbol}")
                 else:
@@ -925,12 +925,12 @@ async def github_actions_production():
                     if signal['buy_targets']:
                         msg += f"\n🎯 **BUY TARGETS:**\n"
                         for i, (name, price, confidence) in enumerate(signal['buy_targets'][:2], 1):
-                            msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
+                            msg += f"{i}. ${price:.6f} ({int(confidence*100)}%)\n"
                     
                     if signal['sell_targets']:
                         msg += f"\n🎯 **SELL TARGETS:**\n"
                         for i, (name, price, confidence) in enumerate(signal['sell_targets'][:2], 1):
-                            msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
+                            msg += f"{i}. ${price:.6f} ({int(confidence*100)}%)\n"
                     
                     # Send message
                     logger.info(f"📨 Attempting to send Telegram for {symbol}...")
