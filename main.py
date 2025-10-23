@@ -166,14 +166,26 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     interval = interval_map.get(tf, "1day")
     
     try:
-        # Use the correct method for kucoin client
+        # Use the correct method for kucoin client - FIXED
         candles = market_client.get_kline(symbol, interval, limit=limit)
         
         if not candles:
             logger.error(f"❌ No data returned for {symbol}")
             return pd.DataFrame()
         
-        df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
+        # Check if candles is a list of lists (original format)
+        if candles and isinstance(candles, list) and len(candles) > 0:
+            if isinstance(candles[0], list):
+                # Original format: [timestamp, open, close, high, low, volume, turnover]
+                df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
+            else:
+                # New format or different structure
+                logger.error(f"❌ Unexpected data format for {symbol}")
+                return pd.DataFrame()
+        else:
+            logger.error(f"❌ Empty or invalid data for {symbol}")
+            return pd.DataFrame()
+        
         for col in ["open", "close", "high", "low", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df = df.dropna(subset=["close", "volume"])
@@ -1068,10 +1080,65 @@ def calculate_position_size(atr, current_price, portfolio_value, risk_per_trade=
         logger.error(f"❌ Error calculating position size: {e}")
         return 0.001
 
+# ================= CONFIGURATION TEST =================
+async def test_configuration():
+    """Test all configurations before running main analysis"""
+    logger.info("🔧 Testing configuration...")
+    
+    # Test KuCoin
+    if market_client:
+        try:
+            # Test with a simple symbol
+            test_symbol = "BTC-USDT"
+            df = await fetch_kucoin_candles(test_symbol, "1d", 10)
+            if not df.empty:
+                logger.info(f"✅ KuCoin test PASSED - {test_symbol} data fetched")
+            else:
+                logger.error("❌ KuCoin test FAILED - No data received")
+        except Exception as e:
+            logger.error(f"❌ KuCoin test FAILED: {e}")
+    else:
+        logger.error("❌ KuCoin client not available")
+    
+    # Test Telegram
+    if TELEGRAM_AVAILABLE and TELEGRAM_TOKEN and CHAT_ID:
+        try:
+            test_msg = "🤖 Crypto Bot Configuration Test\n✅ All systems operational!"
+            success = await send_telegram(test_msg)
+            if success:
+                logger.info("✅ Telegram test PASSED")
+            else:
+                logger.error("❌ Telegram test FAILED - Message not sent")
+        except Exception as e:
+            logger.error(f"❌ Telegram test FAILED: {e}")
+    else:
+        logger.warning("⚠️ Telegram not configured")
+    
+    logger.info("🔧 Configuration test completed")
+
 # ================= MAIN EXECUTION =================
 async def github_actions_production():
     """Production режим за GitHub Actions со вистински податоци и Telegram - SIMPLIFIED"""
     logger.info("🚀 Starting analysis with real market data...")
+    
+    # Check Telegram configuration
+    if not TELEGRAM_AVAILABLE:
+        logger.error("❌ Telegram library not available")
+    elif not TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN not set")
+    elif not CHAT_ID:
+        logger.error("❌ CHAT_ID not set")
+    else:
+        logger.info("✅ Telegram configuration OK")
+    
+    # Test Telegram connection
+    if TELEGRAM_AVAILABLE and TELEGRAM_TOKEN and CHAT_ID:
+        try:
+            test_msg = "🤖 Crypto Bot Started Successfully!\n📊 Beginning market analysis..."
+            await send_telegram(test_msg)
+            logger.info("✅ Test Telegram message sent")
+        except Exception as e:
+            logger.error(f"❌ Test Telegram message failed: {e}")
     
     # Train ML models with real data
     if SKLEARN_AVAILABLE:
@@ -1081,21 +1148,29 @@ async def github_actions_production():
             try:
                 df = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
                 if not df.empty:
+                    logger.info(f"📈 Data for {symbol}: {len(df)} candles, last price: ${df['close'].iloc[-1]:.2f}")
                     train_ml_model(df, sym)
                     logger.info(f"✅ Trained model for {symbol}")
+                else:
+                    logger.warning(f"⚠️ No data for {symbol}")
             except Exception as e:
                 logger.error(f"Error training {symbol}: {e}")
     
     # Analyze all tokens and send ONLY meaningful signals
     logger.info("🔍 Analyzing tokens...")
     strong_signals = 0
+    analyzed_tokens = 0
     
     for sym in TOKENS:
         symbol = sym + "-USDT"
         try:
+            logger.info(f"🔍 Analyzing {symbol}...")
             report = await enhanced_analyze_symbol(symbol)
             if report:
+                analyzed_tokens += 1
                 signal = report['signal']
+                
+                logger.info(f"📊 {symbol} analysis: {signal['direction']} (Strength: {signal['strength']}/10)")
                 
                 # Send message ONLY for strong signals (strength >= 5)
                 if signal['strength'] >= 5:
@@ -1110,7 +1185,7 @@ async def github_actions_production():
                     
                     # Add targets if available
                     if signal['buy_targets']:
-                        msg += f"\n\n🎯 **BUY TARGETS:**\n"
+                        msg += f"\n🎯 **BUY TARGETS:**\n"
                         for i, (name, price, confidence) in enumerate(signal['buy_targets'][:3], 1):
                             msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
                     
@@ -1120,21 +1195,32 @@ async def github_actions_production():
                             msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
                     
                     # Send message
+                    logger.info(f"📨 Attempting to send Telegram for {symbol}...")
                     success = await send_telegram(msg)
                     if success:
                         strong_signals += 1
-                        logger.info(f"📨 Sent signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
+                        logger.info(f"✅ Sent signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
+                    else:
+                        logger.error(f"❌ Failed to send Telegram for {symbol}")
                     
                     # Wait between messages
                     await asyncio.sleep(2)
                 else:
                     logger.info(f"⏭️  Skipping weak signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
+            else:
+                logger.warning(f"⚠️ No report generated for {symbol}")
                 
         except Exception as e:
-            logger.error(f"Error analyzing {symbol}: {e}")
+            logger.error(f"❌ Error analyzing {symbol}: {e}")
     
-    logger.info(f"✅ Analysis completed. Strong signals found: {strong_signals}")
-    return True
+    logger.info(f"✅ Analysis completed. Analyzed: {analyzed_tokens}/{len(TOKENS)}, Strong signals: {strong_signals}")
+    
+    # Send summary message
+    if TELEGRAM_AVAILABLE and TELEGRAM_TOKEN and CHAT_ID:
+        summary_msg = f"📊 Analysis Complete\nAnalyzed: {analyzed_tokens}/{len(TOKENS)} tokens\nStrong signals: {strong_signals}"
+        await send_telegram(summary_msg)
+    
+    return analyzed_tokens > 0
 
 # ================= MAIN EXECUTION =================
 if __name__ == "__main__":
@@ -1173,6 +1259,9 @@ if __name__ == "__main__":
         # Local execution
         if has_api_keys:
             logger.info("🚀 Starting local analysis")
+            # Run configuration test first
+            asyncio.run(test_configuration())
+            # Then run main analysis
             asyncio.run(github_actions_production())
         else:
             logger.error("❌ Missing KuCoin API keys for local execution")
