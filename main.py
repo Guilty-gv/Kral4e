@@ -185,8 +185,8 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     interval = interval_map.get(tf, "1day")
     
     try:
-        # Use the correct method for kucoin client
-        candles = market_client.get_kline(symbol, interval, limit=limit)
+        # Use the correct method for kucoin client v2.2.0 - FIXED!
+        candles = market_client.get_kline_data(symbol, interval, limit=limit)
         
         if not candles:
             logger.error(f"❌ No data returned for {symbol}")
@@ -214,7 +214,6 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     except Exception as e:
         logger.error(f"❌ Error fetching {symbol}: {e}")
         return pd.DataFrame()
-
 # ================= INDICATORS (WITH FALLBACKS) =================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -1148,7 +1147,7 @@ async def debug_kucoin_connection():
             logger.info(f"✅ KuCoin ticker test: {ticker}")
             
             # Try to get kline data
-            klines = market_client.get_kline(test_symbol, '1hour', limit=5)
+           klines = market_client.get_kline_data(test_symbol, '1hour', limit=5)
             logger.info(f"✅ KuCoin klines test: {len(klines)} candles received")
             
             return True
