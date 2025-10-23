@@ -192,6 +192,57 @@ def format_price(price: float) -> str:
     else:
         return f"${price:.8f}"
 
+# ================= DEBUG FUNCTIONS =================
+async def check_all_symbols_data():
+    """Провери дали сите симболи добиваат податоци"""
+    logger.info("🔍 Checking data availability for all symbols...")
+    
+    for sym in TOKENS:
+        symbol = sym + "-USDT"
+        try:
+            df = await fetch_kucoin_candles(symbol, "1d", 50)
+            if df.empty:
+                logger.error(f"❌ NO DATA for {symbol}")
+            else:
+                current_price = df['close'].iloc[-1]
+                logger.info(f"✅ {symbol}: {len(df)} candles, Price: {format_price(current_price)}")
+                
+                # Провери ги индикаторите
+                df = add_indicators(df)
+                if 'RSI' in df.columns:
+                    rsi = df['RSI'].iloc[-1]
+                    logger.info(f"   RSI: {rsi:.2f}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error checking {symbol}: {e}")
+
+async def debug_symbol_analysis():
+    """Детална анализа на зошто некои симболи не даваат сигнали"""
+    logger.info("🐛 Starting detailed symbol analysis...")
+    
+    for sym in TOKENS:
+        symbol = sym + "-USDT"
+        logger.info(f"\n{'='*50}")
+        logger.info(f"🔍 ANALYZING {symbol}")
+        logger.info(f"{'='*50}")
+        
+        report = await enhanced_analyze_symbol(symbol)
+        if report:
+            signal = report['signal']
+            logger.info(f"📊 FINAL SIGNAL: {signal['direction']} (Strength: {signal['strength']})")
+            
+            if signal['strength'] < 3:
+                logger.info(f"❌ SIGNAL TOO WEAK - Needs strength >= 3")
+                logger.info(f"   Details: RSI={report.get('rsi', 'N/A'):.2f}, "
+                          f"MACD={report.get('macd', 'N/A'):.6f}, "
+                          f"Trend={report['trend']}")
+            else:
+                logger.info(f"✅ STRONG SIGNAL - Would send Telegram")
+        else:
+            logger.error(f"💥 NO REPORT GENERATED")
+        
+        await asyncio.sleep(1)  # Rate limiting
+
 # ================= FETCH CANDLES =================
 async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     if market_client is None:
@@ -792,7 +843,6 @@ async def enhanced_analyze_symbol(symbol: str):
             return None
         
         current_price = daily_df["close"].iloc[-1]
-        logger.info(f"💰 {symbol} current price: {format_price(current_price)}, Valid data points: {len(daily_df)}")
         
         # Calculate basic indicators only
         volume_profile = calculate_volume_profile(daily_df.tail(50))  # Use last 50 points
@@ -809,6 +859,18 @@ async def enhanced_analyze_symbol(symbol: str):
             bullish_trend, bearish_trend
         )
         
+        # ДЕТАЛНО ЛОГИРАЊЕ ЗА АНАЛИЗА
+        rsi = daily_df['RSI'].iloc[-1] if 'RSI' in daily_df.columns else 50
+        macd = daily_df['MACD'].iloc[-1] if 'MACD' in daily_df.columns else 0
+        macd_signal = daily_df['MACD_signal'].iloc[-1] if 'MACD_signal' in daily_df.columns else 0
+        
+        logger.info(f"🔍 {symbol} Detailed Analysis:")
+        logger.info(f"   - Price: {format_price(current_price)}")
+        logger.info(f"   - RSI: {rsi:.2f}")
+        logger.info(f"   - MACD: {macd:.6f} > Signal: {macd_signal:.6f} = {macd > macd_signal}")
+        logger.info(f"   - Trend: {'BULLISH' if bullish_trend else 'BEARISH' if bearish_trend else 'NEUTRAL'}")
+        logger.info(f"   - Signal: {final_signal['direction']} (Strength: {final_signal['strength']})")
+        
         # Подготви извештај
         report = {
             'symbol': symbol,
@@ -818,7 +880,10 @@ async def enhanced_analyze_symbol(symbol: str):
             'volume_profile': volume_profile,
             'divergences': divergences,
             'trend': 'BULLISH' if bullish_trend else 'BEARISH' if bearish_trend else 'NEUTRAL',
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.utcnow(),
+            'rsi': rsi,
+            'macd': macd,
+            'macd_signal': macd_signal
         }
         
         return report
@@ -895,6 +960,13 @@ async def github_actions_production():
         except Exception as e:
             logger.error(f"❌ Test Telegram message failed: {e}")
     
+    # ДЕТАЛНА АНАЛИЗА НА СИМБОЛИТЕ
+    logger.info("🔍 Running detailed symbol analysis...")
+    await debug_symbol_analysis()
+    
+    # Провери ги податоците за сите симболи
+    await check_all_symbols_data()
+    
     # Train ML models with real data
     if SKLEARN_AVAILABLE:
         logger.info("📚 Training ML models...")
@@ -912,20 +984,20 @@ async def github_actions_production():
                 logger.error(f"Error training {symbol}: {e}")
     
     # Analyze all tokens and send ONLY meaningful signals
-    logger.info("🔍 Analyzing tokens...")
+    logger.info("🔍 Analyzing tokens for Telegram signals...")
     strong_signals = 0
     analyzed_tokens = 0
     
     for sym in TOKENS:
         symbol = sym + "-USDT"
         try:
-            logger.info(f"🔍 Analyzing {symbol}...")
+            logger.info(f"🔍 Analyzing {symbol} for Telegram...")
             report = await enhanced_analyze_symbol(symbol)
             if report:
                 analyzed_tokens += 1
                 signal = report['signal']
                 
-                logger.info(f"📊 {symbol} analysis: {signal['direction']} (Strength: {signal['strength']}/10)")
+                logger.info(f"📊 {symbol} Telegram analysis: {signal['direction']} (Strength: {signal['strength']}/10)")
                 
                 # Send message ONLY for meaningful signals (strength >= 3)
                 if signal['strength'] >= 3:
@@ -936,7 +1008,8 @@ async def github_actions_production():
                            f"📊 **{symbol}**\n"
                            f"💰 **Price: {format_price(report['current_price'])}**\n"
                            f"💪 Strength: {signal['strength']}/10\n"
-                           f"📈 Trend: {report['trend']}")
+                           f"📈 Trend: {report['trend']}\n"
+                           f"📊 RSI: {report.get('rsi', 'N/A'):.2f}")
                     
                     # Add targets if available
                     if signal['buy_targets']:
