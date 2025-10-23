@@ -176,7 +176,7 @@ def smart_round(value: float) -> float:
         return round(value, 8)
 
 # ================= FETCH CANDLES =================
-async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 500):  # 500 наместо 200
+async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     if market_client is None:
         logger.error(f"❌ KuCoin client not available for {symbol}")
         return pd.DataFrame()
@@ -185,7 +185,7 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 500):  
     interval = interval_map.get(tf, "1day")
     
     try:
-        # Use the correct method for kucoin client v2.2.0
+        # Use the correct method for kucoin client v2.2.0 - get_kline_data instead of get_kline
         candles = market_client.get_kline_data(symbol, interval, limit=limit)
         
         if not candles:
@@ -214,157 +214,50 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 500):  
     except Exception as e:
         logger.error(f"❌ Error fetching {symbol}: {e}")
         return pd.DataFrame()
-# ================= INDICATORS (WITH FALLBACKS) =================
+
+# ================= SIMPLIFIED INDICATORS =================
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
+    if df.empty or len(df) < 20:  # Minimum data needed
         return df
+        
     df = df.copy()
     
     try:
-        # EMA indicators
+        # Calculate indicators that don't require many previous values first
         df["EMA_20"] = df["close"].ewm(span=20, adjust=False).mean()
         df["EMA_50"] = df["close"].ewm(span=50, adjust=False).mean()
-        df["EMA_100"] = df["close"].ewm(span=100, adjust=False).mean()
-        df["EMA_200"] = df["close"].ewm(span=200, adjust=False).mean()
         
-        # SMA indicators
-        df["SMA_50"] = df["close"].rolling(50).mean()
-        df["SMA_200"] = df["close"].rolling(200).mean()
+        # Simple RSI calculation (less aggressive on data requirements)
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+        rs = gain / loss
+        df["RSI"] = 100 - (100 / (1 + rs))
         
-        # RSI (with fallback)
-        if TA_AVAILABLE:
-            df["RSI"] = ta.momentum.RSIIndicator(df["close"], window=RSI_PERIOD).rsi()
-        else:
-            # Simple RSI calculation as fallback
-            delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=RSI_PERIOD).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=RSI_PERIOD).mean()
-            rs = gain / loss
-            df["RSI"] = 100 - (100 / (1 + rs))
+        # Simple OBV
+        df['OBV'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
         
-        # OBV
-        if TA_AVAILABLE:
-            df["OBV"] = ta.volume.OnBalanceVolumeIndicator(df["close"], df["volume"]).on_balance_volume()
-        else:
-            # Simple OBV calculation
-            df['OBV'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+        # Simple MACD
+        exp1 = df['close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        df["MACD"] = exp1 - exp2
+        df["MACD_signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
         
-        # ATR
-        if TA_AVAILABLE:
-            df["ATR"] = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=ATR_PERIOD).average_true_range()
-        else:
-            # Simple ATR calculation
-            high_low = df['high'] - df['low']
-            high_close = np.abs(df['high'] - df['close'].shift())
-            low_close = np.abs(df['low'] - df['close'].shift())
-            true_range = np.maximum(np.maximum(high_low, high_close), low_close)
-            df["ATR"] = true_range.rolling(window=ATR_PERIOD).mean()
-        
-        # MACD
-        if TA_AVAILABLE:
-            macd = ta.trend.MACD(df["close"])
-            df["MACD"] = macd.macd()
-            df["MACD_signal"] = macd.macd_signal()
-            df["MACD_hist"] = macd.macd_diff()
-        else:
-            # Simple MACD calculation
-            exp1 = df['close'].ewm(span=12).mean()
-            exp2 = df['close'].ewm(span=26).mean()
-            df["MACD"] = exp1 - exp2
-            df["MACD_signal"] = df["MACD"].ewm(span=9).mean()
-            df["MACD_hist"] = df["MACD"] - df["MACD_signal"]
-        
-        # Stochastic
-        if TA_AVAILABLE:
-            stoch = ta.momentum.StochasticOscillator(df["high"], df["low"], df["close"], window=STOCH_PERIOD)
-            df["STOCH_K"] = stoch.stoch()
-            df["STOCH_D"] = stoch.stoch_signal()
-        else:
-            # Simple Stochastic calculation
-            low_min = df['low'].rolling(window=STOCH_PERIOD).min()
-            high_max = df['high'].rolling(window=STOCH_PERIOD).max()
-            df["STOCH_K"] = 100 * ((df['close'] - low_min) / (high_max - low_min))
-            df["STOCH_D"] = df["STOCH_K"].rolling(window=3).mean()
-        
-        # Bollinger Bands
-        if TA_AVAILABLE:
-            bb = ta.volatility.BollingerBands(df["close"], window=BB_PERIOD)
-            df["BB_upper"] = bb.bollinger_hband()
-            df["BB_middle"] = bb.bollinger_mavg()
-            df["BB_lower"] = bb.bollinger_lband()
-        else:
-            # Simple Bollinger Bands calculation
-            df["BB_middle"] = df["close"].rolling(window=BB_PERIOD).mean()
-            bb_std = df["close"].rolling(window=BB_PERIOD).std()
-            df["BB_upper"] = df["BB_middle"] + (bb_std * 2)
-            df["BB_lower"] = df["BB_middle"] - (bb_std * 2)
-        
-        # ADX
-        if TA_AVAILABLE:
-            df["ADX"] = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14).adx()
-        else:
-            df["ADX"] = 50  # Default neutral value
-        
-        # Supertrend indicator
-        df = add_supertrend(df, SUPERTREND_PERIOD, SUPERTREND_MULTIPLIER)
+        # Simple Bollinger Bands
+        df["BB_middle"] = df["close"].rolling(window=20, min_periods=1).mean()
+        bb_std = df["close"].rolling(window=20, min_periods=1).std()
+        df["BB_upper"] = df["BB_middle"] + (bb_std * 2)
+        df["BB_lower"] = df["BB_middle"] - (bb_std * 2)
         
         # VWAP
-        df["VWAP"] = (df["close"] * df["volume"]).rolling(VWAP_PERIOD).sum() / (df["volume"].rolling(VWAP_PERIOD).sum() + 1e-9)
+        df["VWAP"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
         
-        # Advanced VWAP with deviations
-        df = calculate_advanced_vwap(df)
+        # Fill NaN values instead of dropping them
+        numeric_columns = df.select_dtypes(include=[np.number]).columns
+        df[numeric_columns] = df[numeric_columns].fillna(method='bfill').fillna(method='ffill')
         
     except Exception as e:
         logger.error(f"❌ Error calculating indicators: {e}")
-    
-    return df
-
-def add_supertrend(df, period=10, multiplier=3):
-    try:
-        high = df['high']
-        low = df['low']
-        close = df['close']
-        
-        # Calculate ATR
-        if TA_AVAILABLE:
-            atr = ta.volatility.AverageTrueRange(high, low, close, window=period).average_true_range()
-        else:
-            # Simple ATR calculation for supertrend
-            high_low = high - low
-            high_close = np.abs(high - close.shift())
-            low_close = np.abs(low - close.shift())
-            true_range = np.maximum(np.maximum(high_low, high_close), low_close)
-            atr = true_range.rolling(window=period).mean()
-        
-        # Calculate basic upper and lower bands
-        hl2 = (high + low) / 2
-        upper_band = hl2 + (multiplier * atr)
-        lower_band = hl2 - (multiplier * atr)
-        
-        # Initialize Supertrend
-        supertrend = pd.Series(index=df.index, dtype=float)
-        direction = pd.Series(index=df.index, dtype=int)  # 1 for uptrend, -1 for downtrend
-        
-        # First value
-        supertrend.iloc[0] = upper_band.iloc[0]
-        direction.iloc[0] = 1
-        
-        for i in range(1, len(df)):
-            if close.iloc[i] > supertrend.iloc[i-1]:
-                direction.iloc[i] = 1
-                supertrend.iloc[i] = max(lower_band.iloc[i], supertrend.iloc[i-1])
-            else:
-                direction.iloc[i] = -1
-                supertrend.iloc[i] = min(upper_band.iloc[i], supertrend.iloc[i-1])
-        
-        df['Supertrend'] = supertrend
-        df['Supertrend_Direction'] = direction
-        
-    except Exception as e:
-        logger.error(f"❌ Error calculating Supertrend: {e}")
-        # Add default values
-        df['Supertrend'] = df['close']
-        df['Supertrend_Direction'] = 1
     
     return df
 
@@ -375,23 +268,26 @@ def calculate_volume_profile(df, num_bins=20):
         return {'poc': 0, 'value_area_high': 0, 'value_area_low': 0, 'volume_profile': {}}
         
     try:
+        # Use only recent data for volume profile
+        recent_df = df.tail(50) if len(df) > 50 else df
+        
         # Сортирај ги цените во bins
-        price_range = df['high'].max() - df['low'].min()
+        price_range = recent_df['high'].max() - recent_df['low'].min()
         if price_range == 0:  # Avoid division by zero
-            return {'poc': df['close'].iloc[-1], 'value_area_high': df['close'].iloc[-1], 'value_area_low': df['close'].iloc[-1], 'volume_profile': {}}
+            return {'poc': recent_df['close'].iloc[-1], 'value_area_high': recent_df['close'].iloc[-1], 'value_area_low': recent_df['close'].iloc[-1], 'volume_profile': {}}
             
         bin_size = price_range / num_bins
-        bins = [df['low'].min() + i * bin_size for i in range(num_bins + 1)]
+        bins = [recent_df['low'].min() + i * bin_size for i in range(num_bins + 1)]
         
         # Пресметај волумен за секој bin
         volume_per_bin = {}
         for i in range(len(bins) - 1):
             lower, upper = bins[i], bins[i + 1]
-            mask = (df['close'] >= lower) & (df['close'] < upper)
-            volume_per_bin[f"{lower:.4f}-{upper:.4f}"] = df.loc[mask, 'volume'].sum()
+            mask = (recent_df['close'] >= lower) & (recent_df['close'] < upper)
+            volume_per_bin[f"{lower:.4f}-{upper:.4f}"] = recent_df.loc[mask, 'volume'].sum()
         
         if not volume_per_bin:
-            return {'poc': df['close'].iloc[-1], 'value_area_high': df['close'].iloc[-1], 'value_area_low': df['close'].iloc[-1], 'volume_profile': {}}
+            return {'poc': recent_df['close'].iloc[-1], 'value_area_high': recent_df['close'].iloc[-1], 'value_area_low': recent_df['close'].iloc[-1], 'volume_profile': {}}
         
         # Најди Point of Control (POC)
         poc_bin = max(volume_per_bin, key=volume_per_bin.get)
@@ -583,19 +479,22 @@ def detect_all_divergences(df, lookback=14):
         return divergences
     
     try:
+        # Use only recent data for divergence detection
+        recent_df = df.tail(30) if len(df) > 30 else df
+        
         # RSI дивергенција
-        rsi = df['RSI'].values
-        price = df['close'].values
+        rsi = recent_df['RSI'].values
+        price = recent_df['close'].values
         
         # Најди peaks и troughs за цена и RSI
-        price_peaks = [i for i in range(lookback, len(df)-lookback) 
+        price_peaks = [i for i in range(lookback, len(recent_df)-lookback) 
                       if price[i] == max(price[i-lookback:i+lookback+1])]
-        price_troughs = [i for i in range(lookback, len(df)-lookback) 
+        price_troughs = [i for i in range(lookback, len(recent_df)-lookback) 
                         if price[i] == min(price[i-lookback:i+lookback+1])]
         
-        rsi_peaks = [i for i in range(lookback, len(df)-lookback) 
+        rsi_peaks = [i for i in range(lookback, len(recent_df)-lookback) 
                     if rsi[i] == max(rsi[i-lookback:i+lookback+1])]
-        rsi_troughs = [i for i in range(lookback, len(df)-lookback) 
+        rsi_troughs = [i for i in range(lookback, len(recent_df)-lookback) 
                       if rsi[i] == min(rsi[i-lookback:i+lookback+1])]
         
         # Regular bearish дивергенција (цената прави повисоки врвови, RSI пониски)
@@ -609,25 +508,6 @@ def detect_all_divergences(df, lookback=14):
             if (price[price_troughs[i]] < price[price_troughs[i-1]] and
                 rsi[rsi_troughs[i]] > rsi[rsi_troughs[i-1]]):
                 divergences.append(('BULLISH_DIVERGENCE', price_troughs[i], 'RSI'))
-        
-        # MACD дивергенција (иста логика како RSI)
-        if 'MACD' in df.columns:
-            macd = df['MACD'].values
-            macd_peaks = [i for i in range(lookback, len(df)-lookback) 
-                         if macd[i] == max(macd[i-lookback:i+lookback+1])]
-            macd_troughs = [i for i in range(lookback, len(df)-lookback) 
-                           if macd[i] == min(macd[i-lookback:i+lookback+1])]
-            
-            # Додади MACD дивергенција detection
-            for i in range(1, min(len(price_peaks), len(macd_peaks))):
-                if (price[price_peaks[i]] > price[price_peaks[i-1]] and
-                    macd[macd_peaks[i]] < macd[macd_peaks[i-1]]):
-                    divergences.append(('BEARISH_DIVERGENCE', price_peaks[i], 'MACD'))
-            
-            for i in range(1, min(len(price_troughs), len(macd_troughs))):
-                if (price[price_troughs[i]] < price[price_troughs[i-1]] and
-                    macd[macd_troughs[i]] > macd[macd_troughs[i-1]]):
-                    divergences.append(('BULLISH_DIVERGENCE', price_troughs[i], 'MACD'))
     
     except Exception as e:
         logger.error(f"❌ Error detecting divergences: {e}")
@@ -641,6 +521,7 @@ def detect_candle_patterns(df):
         return patterns
         
     try:
+        # Use only last 2 candles for pattern detection
         open_price = df['open'].iloc[-1]
         close_price = df['close'].iloc[-1]
         high_price = df['high'].iloc[-1]
@@ -708,17 +589,7 @@ def calculate_precise_price_targets(df, current_price):
         targets['buy_targets'].append(('Value Area Low', volume_profile['value_area_low'], 0.6))
         targets['sell_targets'].append(('Value Area High', volume_profile['value_area_high'], 0.6))
         
-        # 3. Хармонични патерни
-        swing_highs, swing_lows = find_swing_points(df)
-        harmonic_patterns = check_harmonic_patterns(swing_highs, swing_lows)
-        
-        for pattern, price, timestamp in harmonic_patterns:
-            if "Bullish" in pattern and price < current_price * 1.05:  # Within 5%
-                targets['buy_targets'].append((pattern, price, 0.9))
-            elif "Bearish" in pattern and price > current_price * 0.95:  # Within 5%
-                targets['sell_targets'].append((pattern, price, 0.9))
-        
-        # 4. VWAP нивоа
+        # 3. VWAP нивоа
         df_with_vwap = calculate_advanced_vwap(df)
         vwap = df_with_vwap['VWAP'].iloc[-1] if 'VWAP' in df_with_vwap.columns else current_price
         vwap_upper = df_with_vwap['VWAP_upper_1'].iloc[-1] if 'VWAP_upper_1' in df_with_vwap.columns else current_price * 1.02
@@ -728,7 +599,7 @@ def calculate_precise_price_targets(df, current_price):
         targets['buy_targets'].append(('VWAP', vwap, 0.5))
         targets['sell_targets'].append(('VWAP Resistance', vwap_upper, 0.6))
         
-        # 5. Подредување на целите според confidence и растојание од тековната цена
+        # 4. Подредување на целите според confidence и растојание од тековната цена
         def sort_and_filter(target_list, current_price, is_buy=True):
             # Филтрирај цели кои се соодветно позиционирани
             if is_buy:
@@ -776,132 +647,76 @@ def calculate_precise_price_targets(df, current_price):
 
 # ================= TREND ANALYSIS =================
 def is_bullish_trend(df):
-    if df.empty or 'EMA_50' not in df.columns or 'EMA_200' not in df.columns or 'Supertrend_Direction' not in df.columns:
+    if df.empty or 'EMA_20' not in df.columns:
         return False
-    return (df['EMA_50'].iloc[-1] > df['EMA_200'].iloc[-1] and 
-            df['close'].iloc[-1] > df['EMA_50'].iloc[-1] and
-            df['Supertrend_Direction'].iloc[-1] == 1)
+    return df['close'].iloc[-1] > df['EMA_20'].iloc[-1]
 
 def is_bearish_trend(df):
-    if df.empty or 'EMA_50' not in df.columns or 'EMA_200' not in df.columns or 'Supertrend_Direction' not in df.columns:
+    if df.empty or 'EMA_20' not in df.columns:
         return False
-    return (df['EMA_50'].iloc[-1] < df['EMA_200'].iloc[-1] and 
-            df['close'].iloc[-1] < df['EMA_50'].iloc[-1] and
-            df['Supertrend_Direction'].iloc[-1] == -1)
+    return df['close'].iloc[-1] < df['EMA_20'].iloc[-1]
 
-# ================= WEIGHTED VOTING =================
-def weighted_voting_signals(df: pd.DataFrame, token: str, timeframe: str) -> float:
-    votes = []
-    weights = adaptive_weights.get(token, CATEGORY_WEIGHTS)
-    
-    if df.empty:
-        return 0
-    
+# ================= SIMPLIFIED SIGNAL GENERATION =================
+def generate_final_signal(df, volume_profile, divergences, price_targets, bullish, bearish):
+    """Генерира финален торговен сигнал"""
     try:
-        # Structure signals
-        ema20 = df["EMA_20"].iloc[-1] if "EMA_20" in df.columns else 0
-        ema50 = df["EMA_50"].iloc[-1] if "EMA_50" in df.columns else 0
-        ema200 = df["EMA_200"].iloc[-1] if "EMA_200" in df.columns else 0
-        close = df["close"].iloc[-1]
+        signal_strength = 0
+        signal_direction = "HOLD"
+        current_price = df['close'].iloc[-1]
         
-        if close > ema20 > ema50 > ema200 and ema200 > 0:
-            votes.append(("structure", "BUY", weights["structure"]))
-        elif close < ema20 < ema50 < ema200 and ema200 > 0:
-            votes.append(("structure", "SELL", weights["structure"]))
-        else:
-            votes.append(("structure", "HOLD", weights["structure"] * 0.5))
-        
-        # Momentum signals
-        rsi = df["RSI"].iloc[-1] if "RSI" in df.columns else 50
+        # 1. RSI signals
+        rsi = df['RSI'].iloc[-1] if 'RSI' in df.columns else 50
         if rsi < 30:
-            votes.append(("momentum", "BUY", weights["momentum"]))
+            signal_strength += 3
+            signal_direction = "BUY"
         elif rsi > 70:
-            votes.append(("momentum", "SELL", weights["momentum"]))
-        else:
-            votes.append(("momentum", "HOLD", weights["momentum"] * 0.5))
+            signal_strength += 3
+            signal_direction = "SELL"
         
-        if "MACD" in df.columns and "MACD_signal" in df.columns and len(df) > 1:
-            macd = df["MACD"].iloc[-1]
-            macd_signal = df["MACD_signal"].iloc[-1]
-            if macd > macd_signal and df["MACD"].iloc[-2] <= df["MACD_signal"].iloc[-2]:
-                votes.append(("momentum", "BUY", weights["momentum"] * 0.7))
-            elif macd < macd_signal and df["MACD"].iloc[-2] >= df["MACD_signal"].iloc[-2]:
-                votes.append(("momentum", "SELL", weights["momentum"] * 0.7))
-        
-        # Volume signals
-        if "OBV" in df.columns and len(df["OBV"]) >= 20:
-            if df["OBV"].iloc[-1] > df["OBV"].iloc[-20]:
-                votes.append(("volume", "BUY", weights["volume"]))
+        # 2. MACD signals
+        if 'MACD' in df.columns and 'MACD_signal' in df.columns and len(df) > 1:
+            macd = df['MACD'].iloc[-1]
+            macd_signal = df['MACD_signal'].iloc[-1]
+            if macd > macd_signal:
+                signal_strength += 2
+                signal_direction = "BUY" if signal_strength < 3 else signal_direction
             else:
-                votes.append(("volume", "SELL", weights["volume"]))
+                signal_strength += 2
+                signal_direction = "SELL" if signal_strength < 3 else signal_direction
+        
+        # 3. Trend signals
+        if bullish:
+            signal_strength += 1
+        elif bearish:
+            signal_strength -= 1
+        
+        # 4. Final decision
+        if abs(signal_strength) >= 3:  # Lower threshold
+            return {
+                'direction': signal_direction,
+                'strength': min(abs(signal_strength), 10),
+                'buy_targets': price_targets['buy_targets'][:2],  # Only top 2 targets
+                'sell_targets': price_targets['sell_targets'][:2], # Only top 2 targets
+                'confidence': min(abs(signal_strength) / 10.0, 1.0)
+            }
         else:
-            votes.append(("volume", "HOLD", weights["volume"] * 0.5))
-        
-        # Candle patterns
-        candle_patterns = detect_candle_patterns(df)
-        if "HAMMER" in candle_patterns or "BULLISH_ENGULFING" in candle_patterns:
-            votes.append(("candles", "BUY", weights["candles"]))
-        elif "SHOOTING_STAR" in candle_patterns or "BEARISH_ENGULFING" in candle_patterns:
-            votes.append(("candles", "SELL", weights["candles"]))
-        else:
-            votes.append(("candles", "HOLD", weights["candles"] * 0.5))
-        
-        # Exotic indicators (Bollinger Bands, Stochastic)
-        if "BB_lower" in df.columns and "BB_upper" in df.columns:
-            bb_lower = df["BB_lower"].iloc[-1]
-            bb_upper = df["BB_upper"].iloc[-1]
-            if bb_upper != bb_lower:  # Avoid division by zero
-                bb_position = (close - bb_lower) / (bb_upper - bb_lower)
-                if bb_position < 0.2:
-                    votes.append(("exotic", "BUY", weights["exotic"]))
-                elif bb_position > 0.8:
-                    votes.append(("exotic", "SELL", weights["exotic"]))
-        
-        if "STOCH_K" in df.columns and "STOCH_D" in df.columns:
-            stoch_k = df["STOCH_K"].iloc[-1]
-            stoch_d = df["STOCH_D"].iloc[-1]
-            if stoch_k < 20 and stoch_d < 20:
-                votes.append(("exotic", "BUY", weights["exotic"] * 0.7))
-            elif stoch_k > 80 and stoch_d > 80:
-                votes.append(("exotic", "SELL", weights["exotic"] * 0.7))
-        
-        # Supertrend
-        if 'Supertrend_Direction' in df.columns:
-            if df['Supertrend_Direction'].iloc[-1] == 1:
-                votes.append(("structure", "BUY", weights["structure"] * 0.5))
-            else:
-                votes.append(("structure", "SELL", weights["structure"] * 0.5))
-        
-        # Harmonic patterns
-        swing_highs, swing_lows = find_swing_points(df)
-        harmonic_patterns = check_harmonic_patterns(swing_highs, swing_lows)
-        
-        for pattern, price, timestamp in harmonic_patterns:
-            if "Bullish" in pattern and close <= price * 1.02:  # Within 2% of pattern target
-                votes.append(("harmonics", "BUY", weights["harmonics"]))
-            elif "Bearish" in pattern and close >= price * 0.98:  # Within 2% of pattern target
-                votes.append(("harmonics", "SELL", weights["harmonics"]))
-        
-        # Calculate weighted score
-        score = 0
-        for category, vote, weight in votes:
-            if vote == "BUY":
-                score += weight
-            elif vote == "SELL":
-                score -= weight
-        
-        # Adjust based on trend
-        if timeframe == "1d":  # Use higher timeframe for trend confirmation
-            if is_bullish_trend(df):
-                score += 0.1
-            elif is_bearish_trend(df):
-                score -= 0.1
-        
-        return score
-    
+            return {
+                'direction': "HOLD",
+                'strength': 0,
+                'buy_targets': [],
+                'sell_targets': [],
+                'confidence': 0
+            }
+            
     except Exception as e:
-        logger.error(f"❌ Error in weighted voting for {token}: {e}")
-        return 0
+        logger.error(f"❌ Error generating final signal: {e}")
+        return {
+            'direction': "HOLD",
+            'strength': 0,
+            'buy_targets': [],
+            'sell_targets': [],
+            'confidence': 0
+        }
 
 # ================= ML MODEL =================
 def train_ml_model(df: pd.DataFrame, token: str):
@@ -909,20 +724,19 @@ def train_ml_model(df: pd.DataFrame, token: str):
         return
         
     try:
-        df = add_indicators(df).dropna()
+        df = add_indicators(df)
         if len(df) < 10:  # Need enough data
             return
             
         df["target"] = (df["close"].shift(-1) - df["close"]).apply(lambda x: 1 if x > 0 else -1 if x < 0 else 0)
         
-        features = ["EMA_20", "EMA_50", "EMA_200", "RSI", "OBV", "ATR", "VWAP", "MACD", 
-                    "STOCH_K", "STOCH_D", "BB_upper", "BB_middle", "BB_lower", "ADX"]
+        features = ["EMA_20", "EMA_50", "RSI", "OBV", "MACD", "BB_upper", "BB_middle", "BB_lower"]
         
         # Keep only features that exist in the dataframe
         available_features = [f for f in features if f in df.columns]
         df = df.dropna(subset=available_features + ["target"])
         
-        if len(df) < 50:  # Need enough data
+        if len(df) < 20:  # Need enough data
             return
         
         X = df[available_features]
@@ -936,149 +750,65 @@ def train_ml_model(df: pd.DataFrame, token: str):
     except Exception as e:
         logger.error(f"❌ Error training ML model for {token}: {e}")
 
-def ml_confidence(df: pd.DataFrame, token: str) -> float:
-    clf = ml_models.get(token)
-    if not clf or not SKLEARN_AVAILABLE:
-        return 0
-    
-    try:
-        features = ["EMA_20", "EMA_50", "EMA_200", "RSI", "OBV", "ATR", "VWAP", "MACD", 
-                    "STOCH_K", "STOCH_D", "BB_upper", "BB_middle", "BB_lower", "ADX"]
-        
-        # Keep only features that exist in the dataframe
-        available_features = [f for f in features if f in df.columns]
-        X_last = df[available_features].iloc[[-1]]
-        
-        probs = clf.predict_proba(X_last)[0]
-        # Assuming classes are [-1, 0, 1] for [SELL, HOLD, BUY]
-        if hasattr(clf, 'classes_') and len(clf.classes_) == 3:
-            sell_prob = probs[0] if clf.classes_[0] == -1 else 0
-            buy_prob = probs[2] if clf.classes_[2] == 1 else 0
-            return buy_prob - sell_prob
-        else:
-            return 0
-    except Exception as e:
-        logger.error(f"❌ Error in ML confidence for {token}: {e}")
-        return 0
-
 # ================= ENHANCED ANALYZE SYMBOL =================
 async def enhanced_analyze_symbol(symbol: str):
     """Напредна анализа на симбол со сите индикатори"""
-    token = symbol.replace("-USDT", "")
-    
-    # Земи податоци од дневен тајмфрејм
-    daily_df = await fetch_kucoin_candles(symbol, "1d", 500)  # Користи 500 свеќи
-    if daily_df.empty:
-        logger.error(f"❌ No data available for {symbol} - skipping")
-        return None
-    
-    daily_df = add_indicators(daily_df).dropna()
-    if len(daily_df) < 30:  # Промена од 50 на 30
-        logger.error(f"❌ Not enough data for {symbol} - skipping (have {len(daily_df)}, need 30)")
-        return None
-    
-    current_price = daily_df["close"].iloc[-1]
-    logger.info(f"💰 {symbol} current price: ${current_price:.2f}, Data points: {len(daily_df)}")
-    
-    # Пресметај ги сите индикатори
-    volume_profile = calculate_volume_profile(daily_df)
-    divergences = detect_all_divergences(daily_df)
-    price_targets = calculate_precise_price_targets(daily_df, current_price)
-    
-    # Детектирај тренд
-    bullish_trend = is_bullish_trend(daily_df)
-    bearish_trend = is_bearish_trend(daily_df)
-    
-    # Генерирај финален сигнал
-    final_signal = generate_final_signal(
-        daily_df, volume_profile, divergences, price_targets, 
-        bullish_trend, bearish_trend
-    )
-    
-    # Подготви извештај
-    report = {
-        'symbol': symbol,
-        'current_price': current_price,
-        'signal': final_signal,
-        'price_targets': price_targets,
-        'volume_profile': volume_profile,
-        'divergences': divergences,
-        'trend': 'BULLISH' if bullish_trend else 'BEARISH' if bearish_trend else 'NEUTRAL',
-        'timestamp': datetime.utcnow()
-    }
-    
-    return report
-
-def generate_final_signal(df, volume_profile, divergences, price_targets, bullish, bearish):
-    """Генерира финален торговен сигнал врз основа на сите индикатори"""
-    signal_strength = 0
-    signal_direction = "HOLD"
-    
     try:
-        # 1. Провери дивергенции (моќен сигнал)
-        for div_type, index, indicator in divergences:
-            if div_type == 'BULLISH_DIVERGENCE' and index >= len(df) - 3:  # Многу неодамнешна
-                signal_strength += 8
-                signal_direction = "BUY"
-            elif div_type == 'BEARISH_DIVERGENCE' and index >= len(df) - 3:
-                signal_strength += 8
-                signal_direction = "SELL"
+        # Земи податоци од дневен тајмфрејм
+        daily_df = await fetch_kucoin_candles(symbol, "1d", 200)
+        if daily_df.empty:
+            logger.error(f"❌ No data available for {symbol} - skipping")
+            return None
         
-        # 2. Провери дали цената е близу Volume POC
-        current_price = df['close'].iloc[-1]
-        poc = volume_profile['poc']
-        if abs(current_price - poc) / poc < 0.02:  # Within 2%
-            signal_strength += 5
-            # Ако е над POC во bullish тренд, купувај на падови кон POC
-            if current_price > poc and bullish:
-                signal_direction = "BUY" if signal_strength < 5 else signal_direction
-            elif current_price < poc and bearish:
-                signal_direction = "SELL" if signal_strength < 5 else signal_direction
+        logger.info(f"📊 Raw data for {symbol}: {len(daily_df)} candles")
         
-        # 3. Провери RSI
-        rsi = df['RSI'].iloc[-1] if 'RSI' in df.columns else 50
-        if rsi < 30:
-            signal_strength += 4
-            signal_direction = "BUY"
-        elif rsi > 70:
-            signal_strength += 4
-            signal_direction = "SELL"
+        # Add indicators without dropping NaN values aggressively
+        daily_df = add_indicators(daily_df)
         
-        # 4. Провери дали имаме силни ценовни цели
-        if price_targets['buy_targets'] and price_targets['confidence'] > 0.7:
-            signal_strength += 3
-            signal_direction = "BUY"
-        elif price_targets['sell_targets'] and price_targets['confidence'] > 0.7:
-            signal_strength += 3
-            signal_direction = "SELL"
+        # Keep only rows that have the essential indicators
+        essential_cols = ['close', 'EMA_20', 'RSI', 'MACD']
+        available_cols = [col for col in essential_cols if col in daily_df.columns]
+        daily_df = daily_df.dropna(subset=available_cols)
         
-        # 5. Финална одлука
-        if signal_strength >= 10:
-            return {
-                'direction': signal_direction,
-                'strength': min(signal_strength, 10),
-                'buy_targets': price_targets['buy_targets'],
-                'sell_targets': price_targets['sell_targets'],
-                'confidence': price_targets['confidence']
-            }
-        else:
-            return {
-                'direction': "HOLD",
-                'strength': signal_strength,
-                'buy_targets': [],
-                'sell_targets': [],
-                'confidence': 0
-            }
-    
-    except Exception as e:
-        logger.error(f"❌ Error generating final signal: {e}")
-        return {
-            'direction': "HOLD",
-            'strength': 0,
-            'buy_targets': [],
-            'sell_targets': [],
-            'confidence': 0
+        if len(daily_df) < 10:  # Reduced minimum requirement
+            logger.error(f"❌ Not enough valid data for {symbol} - skipping (have {len(daily_df)}, need 10)")
+            return None
+        
+        current_price = daily_df["close"].iloc[-1]
+        logger.info(f"💰 {symbol} current price: ${current_price:.2f}, Valid data points: {len(daily_df)}")
+        
+        # Calculate basic indicators only
+        volume_profile = calculate_volume_profile(daily_df.tail(50))  # Use last 50 points
+        divergences = detect_all_divergences(daily_df.tail(30))  # Use last 30 points
+        price_targets = calculate_precise_price_targets(daily_df, current_price)
+        
+        # Simple trend detection
+        bullish_trend = len(daily_df) > 20 and daily_df['close'].iloc[-1] > daily_df['EMA_20'].iloc[-1]
+        bearish_trend = len(daily_df) > 20 and daily_df['close'].iloc[-1] < daily_df['EMA_20'].iloc[-1]
+        
+        # Generate final signal
+        final_signal = generate_final_signal(
+            daily_df, volume_profile, divergences, price_targets, 
+            bullish_trend, bearish_trend
+        )
+        
+        # Подготви извештај
+        report = {
+            'symbol': symbol,
+            'current_price': current_price,
+            'signal': final_signal,
+            'price_targets': price_targets,
+            'volume_profile': volume_profile,
+            'divergences': divergences,
+            'trend': 'BULLISH' if bullish_trend else 'BEARISH' if bearish_trend else 'NEUTRAL',
+            'timestamp': datetime.utcnow()
         }
+        
+        return report
+        
+    except Exception as e:
+        logger.error(f"❌ Error analyzing {symbol}: {e}")
+        return None
 
 # ================= RISK MANAGEMENT =================
 def calculate_position_size(atr, current_price, portfolio_value, risk_per_trade=0.02):
@@ -1096,42 +826,6 @@ def calculate_position_size(atr, current_price, portfolio_value, risk_per_trade=
     except Exception as e:
         logger.error(f"❌ Error calculating position size: {e}")
         return 0.001
-
-# ================= CONFIGURATION TEST =================
-async def test_configuration():
-    """Test all configurations before running main analysis"""
-    logger.info("🔧 Testing configuration...")
-    
-    # Test KuCoin
-    if market_client:
-        try:
-            # Test with a simple symbol
-            test_symbol = "BTC-USDT"
-            df = await fetch_kucoin_candles(test_symbol, "1d", 10)
-            if not df.empty:
-                logger.info(f"✅ KuCoin test PASSED - {test_symbol} data fetched")
-            else:
-                logger.error("❌ KuCoin test FAILED - No data received")
-        except Exception as e:
-            logger.error(f"❌ KuCoin test FAILED: {e}")
-    else:
-        logger.error("❌ KuCoin client not available")
-    
-    # Test Telegram
-    if TELEGRAM_AVAILABLE and TELEGRAM_TOKEN and CHAT_ID:
-        try:
-            test_msg = "🤖 Crypto Bot Configuration Test\n✅ All systems operational!"
-            success = await send_telegram(test_msg)
-            if success:
-                logger.info("✅ Telegram test PASSED")
-            else:
-                logger.error("❌ Telegram test FAILED - Message not sent")
-        except Exception as e:
-            logger.error(f"❌ Telegram test FAILED: {e}")
-    else:
-        logger.warning("⚠️ Telegram not configured")
-    
-    logger.info("🔧 Configuration test completed")
 
 # ================= DEBUG KUCOIN CONNECTION =================
 async def debug_kucoin_connection():
@@ -1190,7 +884,7 @@ async def github_actions_production():
         for sym in TOKENS:
             symbol = sym + "-USDT"
             try:
-                df = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
+                df = await fetch_kucoin_candles(symbol, "1d", 200)
                 if not df.empty:
                     logger.info(f"📈 Data for {symbol}: {len(df)} candles, last price: ${df['close'].iloc[-1]:.2f}")
                     train_ml_model(df, sym)
@@ -1216,8 +910,8 @@ async def github_actions_production():
                 
                 logger.info(f"📊 {symbol} analysis: {signal['direction']} (Strength: {signal['strength']}/10)")
                 
-                # Send message ONLY for strong signals (strength >= 5)
-                if signal['strength'] >= 5:
+                # Send message ONLY for meaningful signals (strength >= 3)
+                if signal['strength'] >= 3:
                     # Create clean signal message
                     direction_emoji = "🟢" if signal['direction'] == "BUY" else "🔴" if signal['direction'] == "SELL" else "🟡"
                     
@@ -1230,12 +924,12 @@ async def github_actions_production():
                     # Add targets if available
                     if signal['buy_targets']:
                         msg += f"\n🎯 **BUY TARGETS:**\n"
-                        for i, (name, price, confidence) in enumerate(signal['buy_targets'][:3], 1):
+                        for i, (name, price, confidence) in enumerate(signal['buy_targets'][:2], 1):
                             msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
                     
                     if signal['sell_targets']:
                         msg += f"\n🎯 **SELL TARGETS:**\n"
-                        for i, (name, price, confidence) in enumerate(signal['sell_targets'][:3], 1):
+                        for i, (name, price, confidence) in enumerate(signal['sell_targets'][:2], 1):
                             msg += f"{i}. ${price:.2f} ({int(confidence*100)}%)\n"
                     
                     # Send message
@@ -1303,8 +997,6 @@ if __name__ == "__main__":
         # Local execution
         if has_api_keys:
             logger.info("🚀 Starting local analysis")
-            # Run configuration test first
-            asyncio.run(test_configuration())
             # Then run main analysis
             asyncio.run(github_actions_production())
         else:
