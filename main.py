@@ -175,6 +175,23 @@ def smart_round(value: float) -> float:
     else:
         return round(value, 8)
 
+def format_price(price: float) -> str:
+    """Форматирај цена со соодветен број на децимали според големината на цената"""
+    if price >= 1000:
+        return f"${price:.2f}"
+    elif price >= 100:
+        return f"${price:.3f}"
+    elif price >= 10:
+        return f"${price:.4f}"
+    elif price >= 1:
+        return f"${price:.5f}"
+    elif price >= 0.1:
+        return f"${price:.6f}"
+    elif price >= 0.01:
+        return f"${price:.7f}"
+    else:
+        return f"${price:.8f}"
+
 # ================= FETCH CANDLES =================
 async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     if market_client is None:
@@ -208,7 +225,7 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
         # Sort by timestamp and return
         df = df.sort_values("timestamp").reset_index(drop=True)
         
-        logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}. Last price: ${df['close'].iloc[-1]:.6f}")
+        logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}. Last price: {format_price(df['close'].iloc[-1])}")
         return df[["timestamp", "open", "high", "low", "close", "volume"]]
         
     except Exception as e:
@@ -775,7 +792,7 @@ async def enhanced_analyze_symbol(symbol: str):
             return None
         
         current_price = daily_df["close"].iloc[-1]
-        logger.info(f"💰 {symbol} current price: ${current_price:.6f}, Valid data points: {len(daily_df)}")
+        logger.info(f"💰 {symbol} current price: {format_price(current_price)}, Valid data points: {len(daily_df)}")
         
         # Calculate basic indicators only
         volume_profile = calculate_volume_profile(daily_df.tail(50))  # Use last 50 points
@@ -840,7 +857,7 @@ async def debug_kucoin_connection():
         
         # Test ticker
         ticker = market_client.get_ticker(test_symbol)
-        logger.info(f"✅ KuCoin ticker: ${ticker.get('price', 'N/A')}")
+        logger.info(f"✅ KuCoin ticker: {format_price(float(ticker.get('price', 0)))}")
         
         # Test klines
         klines = market_client.get_kline_data(test_symbol, '1hour', limit=5)
@@ -886,7 +903,7 @@ async def github_actions_production():
             try:
                 df = await fetch_kucoin_candles(symbol, "1d", 200)
                 if not df.empty:
-                    logger.info(f"📈 Data for {symbol}: {len(df)} candles, last price: ${df['close'].iloc[-1]:.6f}")
+                    logger.info(f"📈 Data for {symbol}: {len(df)} candles, last price: {format_price(df['close'].iloc[-1])}")
                     train_ml_model(df, sym)
                     logger.info(f"✅ Trained model for {symbol}")
                 else:
@@ -917,7 +934,7 @@ async def github_actions_production():
                     
                     msg = (f"{direction_emoji} **{signal['direction']} SIGNAL** {direction_emoji}\n"
                            f"📊 **{symbol}**\n"
-                           f"💰 **Price: ${report['current_price']:.2f}**\n"
+                           f"💰 **Price: {format_price(report['current_price'])}**\n"
                            f"💪 Strength: {signal['strength']}/10\n"
                            f"📈 Trend: {report['trend']}")
                     
@@ -925,12 +942,12 @@ async def github_actions_production():
                     if signal['buy_targets']:
                         msg += f"\n🎯 **BUY TARGETS:**\n"
                         for i, (name, price, confidence) in enumerate(signal['buy_targets'][:2], 1):
-                            msg += f"{i}. ${price:.6f} ({int(confidence*100)}%)\n"
+                            msg += f"{i}. {format_price(price)} ({int(confidence*100)}%)\n"
                     
                     if signal['sell_targets']:
                         msg += f"\n🎯 **SELL TARGETS:**\n"
                         for i, (name, price, confidence) in enumerate(signal['sell_targets'][:2], 1):
-                            msg += f"{i}. ${price:.6f} ({int(confidence*100)}%)\n"
+                            msg += f"{i}. {format_price(price)} ({int(confidence*100)}%)\n"
                     
                     # Send message
                     logger.info(f"📨 Attempting to send Telegram for {symbol}...")
