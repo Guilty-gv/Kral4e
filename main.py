@@ -176,7 +176,7 @@ def smart_round(value: float) -> float:
         return round(value, 8)
 
 # ================= FETCH CANDLES =================
-async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
+async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 500):  # 500 наместо 200
     if market_client is None:
         logger.error(f"❌ KuCoin client not available for {symbol}")
         return pd.DataFrame()
@@ -185,7 +185,7 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     interval = interval_map.get(tf, "1day")
     
     try:
-        # Use the correct method for kucoin client v2.2.0 - FIXED!
+        # Use the correct method for kucoin client v2.2.0
         candles = market_client.get_kline_data(symbol, interval, limit=limit)
         
         if not candles:
@@ -202,8 +202,8 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
         # Remove rows with invalid data
         df = df.dropna(subset=["close", "volume"])
         
-        # Convert timestamp
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
+        # Convert timestamp - FIXED to avoid warning
+        df["timestamp"] = pd.to_datetime(pd.to_numeric(df["timestamp"], errors="coerce"), unit="s", errors="coerce")
         
         # Sort by timestamp and return
         df = df.sort_values("timestamp").reset_index(drop=True)
@@ -967,18 +967,18 @@ async def enhanced_analyze_symbol(symbol: str):
     token = symbol.replace("-USDT", "")
     
     # Земи податоци од дневен тајмфрејм
-    daily_df = await fetch_kucoin_candles(symbol, "1d", MAX_OHLCV)
+    daily_df = await fetch_kucoin_candles(symbol, "1d", 500)  # Користи 500 свеќи
     if daily_df.empty:
         logger.error(f"❌ No data available for {symbol} - skipping")
         return None
     
     daily_df = add_indicators(daily_df).dropna()
-    if len(daily_df) < 50:
-        logger.error(f"❌ Not enough data for {symbol} - skipping")
+    if len(daily_df) < 30:  # Промена од 50 на 30
+        logger.error(f"❌ Not enough data for {symbol} - skipping (have {len(daily_df)}, need 30)")
         return None
     
     current_price = daily_df["close"].iloc[-1]
-    logger.info(f"💰 {symbol} current price: ${current_price:.2f}")
+    logger.info(f"💰 {symbol} current price: ${current_price:.2f}, Data points: {len(daily_df)}")
     
     # Пресметај ги сите индикатори
     volume_profile = calculate_volume_profile(daily_df)
