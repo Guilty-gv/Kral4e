@@ -1136,26 +1136,25 @@ async def test_configuration():
 # ================= DEBUG KUCOIN CONNECTION =================
 async def debug_kucoin_connection():
     """Debug KuCoin connection"""
-    if market_client:
-        try:
-            # Test with a simple symbol
-            test_symbol = "BTC-USDT"
-            logger.info(f"🔧 Testing KuCoin with {test_symbol}...")
-            
-            # Try to get ticker data
-            ticker = market_client.get_ticker(test_symbol)
-            logger.info(f"✅ KuCoin ticker test: {ticker}")
-            
-            # Try to get kline data
-           klines = market_client.get_kline_data(test_symbol, '1hour', limit=5)
-            logger.info(f"✅ KuCoin klines test: {len(klines)} candles received")
-            
-            return True
-        except Exception as e:
-            logger.error(f"❌ KuCoin debug failed: {e}")
-            return False
-    else:
+    if not market_client:
         logger.error("❌ KuCoin client not available for debug")
+        return False
+    
+    try:
+        test_symbol = "BTC-USDT"
+        logger.info(f"🔧 Testing KuCoin with {test_symbol}...")
+        
+        # Test ticker
+        ticker = market_client.get_ticker(test_symbol)
+        logger.info(f"✅ KuCoin ticker: ${ticker.get('price', 'N/A')}")
+        
+        # Test klines
+        klines = market_client.get_kline_data(test_symbol, '1hour', limit=5)
+        logger.info(f"✅ KuCoin klines: {len(klines)} candles")
+        
+        return True
+    except Exception as e:
+        logger.error(f"❌ KuCoin debug failed: {e}")
         return False
 
 # ================= MAIN EXECUTION =================
