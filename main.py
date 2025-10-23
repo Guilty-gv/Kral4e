@@ -231,8 +231,8 @@ async def debug_symbol_analysis():
             signal = report['signal']
             logger.info(f"📊 FINAL SIGNAL: {signal['direction']} (Strength: {signal['strength']})")
             
-            if signal['strength'] < 3:
-                logger.info(f"❌ SIGNAL TOO WEAK - Needs strength >= 3")
+            if signal['strength'] < 2:  # Променето од 3 на 2
+                logger.info(f"❌ SIGNAL TOO WEAK - Needs strength >= 2")
                 logger.info(f"   Details: RSI={report.get('rsi', 'N/A'):.2f}, "
                           f"MACD={report.get('macd', 'N/A'):.6f}, "
                           f"Trend={report['trend']}")
@@ -310,15 +310,31 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         exp2 = df['close'].ewm(span=26, adjust=False).mean()
         df["MACD"] = exp1 - exp2
         df["MACD_signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+        df["MACD_histogram"] = df["MACD"] - df["MACD_signal"]
         
         # Simple Bollinger Bands
         df["BB_middle"] = df["close"].rolling(window=20, min_periods=1).mean()
         bb_std = df["close"].rolling(window=20, min_periods=1).std()
         df["BB_upper"] = df["BB_middle"] + (bb_std * 2)
         df["BB_lower"] = df["BB_middle"] - (bb_std * 2)
+        df["BB_width"] = (df["BB_upper"] - df["BB_lower"]) / df["BB_middle"]
         
         # VWAP
         df["VWAP"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
+        
+        # Stochastic
+        lowest_low = df['low'].rolling(window=14).min()
+        highest_high = df['high'].rolling(window=14).max()
+        df['STOCH_K'] = 100 * ((df['close'] - lowest_low) / (highest_high - lowest_low))
+        df['STOCH_D'] = df['STOCH_K'].rolling(window=3).mean()
+        
+        # ATR
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        df['ATR'] = true_range.rolling(14).mean()
         
         # Fill NaN values instead of dropping them
         numeric_columns = df.select_dtypes(include=[np.number]).columns
@@ -390,382 +406,118 @@ def calculate_volume_profile(df, num_bins=20):
         logger.error(f"❌ Error calculating volume profile: {e}")
         return {'poc': df['close'].iloc[-1], 'value_area_high': df['close'].iloc[-1], 'value_area_low': df['close'].iloc[-1], 'volume_profile': {}}
 
-def calculate_advanced_vwap(df):
-    """Пресметува напреден VWAP со отстапувања"""
-    try:
-        typical_price = (df['high'] + df['low'] + df['close']) / 3
-        vwap = (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
-        
-        # Пресметај стандардно отстапување
-        std_dev = (typical_price - vwap).rolling(20).std()
-        
-        # VWAP линии со отстапувања
-        df['VWAP'] = vwap
-        df['VWAP_upper_1'] = vwap + std_dev
-        df['VWAP_upper_2'] = vwap + 2 * std_dev
-        df['VWAP_lower_1'] = vwap - std_dev
-        df['VWAP_lower_2'] = vwap - 2 * std_dev
-        
-    except Exception as e:
-        logger.error(f"❌ Error calculating advanced VWAP: {e}")
-        # Add default VWAP
-        df['VWAP'] = df['close']
-        df['VWAP_upper_1'] = df['close'] * 1.01
-        df['VWAP_upper_2'] = df['close'] * 1.02
-        df['VWAP_lower_1'] = df['close'] * 0.99
-        df['VWAP_lower_2'] = df['close'] * 0.98
-    
-    return df
-
-# ================= HARMONIC PATTERNS =================
-def find_swing_points(df, lookback=5):
-    if df.empty or len(df) < lookback * 2:
-        return [], []
-        
-    try:
-        highs = df['high'].values
-        lows = df['low'].values
-        swing_highs = []
-        swing_lows = []
-        
-        for i in range(lookback, len(df)-lookback):
-            # Find swing highs
-            if highs[i] == max(highs[i-lookback:i+lookback+1]):
-                swing_highs.append((i, highs[i], df['timestamp'].iloc[i]))
-            # Find swing lows
-            if lows[i] == min(lows[i-lookback:i+lookback+1]):
-                swing_lows.append((i, lows[i], df['timestamp'].iloc[i]))
-        
-        return swing_highs, swing_lows
-    except Exception as e:
-        logger.error(f"❌ Error finding swing points: {e}")
-        return [], []
-
-def check_harmonic_patterns(swing_highs, swing_lows):
-    patterns = []
-    
-    try:
-        # We need at least 5 points for most harmonic patterns (X, A, B, C, D)
-        if len(swing_highs) < 5 or len(swing_lows) < 5:
-            return patterns
-        
-        # Combine all swing points in chronological order
-        all_swings = []
-        for high in swing_highs:
-            all_swings.append(('high', high[0], high[1], high[2]))
-        for low in swing_lows:
-            all_swings.append(('low', low[0], low[1], low[2]))
-        
-        all_swings.sort(key=lambda x: x[1])  # Sort by index
-        
-        # Check for various harmonic patterns
-        for i in range(len(all_swings) - 4):
-            points = all_swings[i:i+5]
-            
-            # Check if we have alternating high/low points
-            if not (points[0][0] != points[1][0] and points[1][0] != points[2][0] and 
-                    points[2][0] != points[3][0] and points[3][0] != points[4][0]):
-                continue
-            
-            # Extract price values
-            X = points[0][2]
-            A = points[1][2]
-            B = points[2][2]
-            C = points[3][2]
-            D = points[4][2]
-            
-            # Calculate ratios
-            AB = abs(B - A)
-            BC = abs(C - B)
-            CD = abs(D - C)
-            XA = abs(A - X)
-            
-            if XA == 0:  # Avoid division by zero
-                continue
-                
-            AB_ratio = AB / XA
-            BC_ratio = BC / AB if AB != 0 else 0
-            CD_ratio = CD / BC if BC != 0 else 0
-            
-            # Check for Gartley pattern
-            if (0.55 <= AB_ratio <= 0.65 and 0.35 <= BC_ratio <= 0.45 and 
-                1.0 <= CD_ratio <= 1.2 and 0.75 <= (abs(D - X) / XA) <= 0.85):
-                pattern_type = "Bullish Gartley" if D < X else "Bearish Gartley"
-                patterns.append((pattern_type, D, points[4][3]))
-            
-            # Check for Bat pattern
-            elif (0.35 <= AB_ratio <= 0.50 and 0.35 <= BC_ratio <= 0.45 and 
-                  1.6 <= CD_ratio <= 1.8 and 0.85 <= (abs(D - X) / XA) <= 0.90):
-                pattern_type = "Bullish Bat" if D < X else "Bearish Bat"
-                patterns.append((pattern_type, D, points[4][3]))
-            
-            # Check for Butterfly pattern
-            elif (0.70 <= AB_ratio <= 0.80 and 0.35 <= BC_ratio <= 0.45 and 
-                  1.2 <= CD_ratio <= 1.4 and 1.25 <= (abs(D - X) / XA) <= 1.30):
-                pattern_type = "Bullish Butterfly" if D < X else "Bearish Butterfly"
-                patterns.append((pattern_type, D, points[4][3]))
-    
-    except Exception as e:
-        logger.error(f"❌ Error checking harmonic patterns: {e}")
-    
-    return patterns
-
-# ================= FIBONACCI & ELLIOTT WAVE =================
-def fib_levels(df, lookback=100):
-    if df.empty:
-        return {}
-        
-    try:
-        recent = df.tail(lookback)
-        high, low = recent["high"].max(), recent["low"].min()
-        diff = high - low
-        if diff == 0:
-            return {"0.0": high, "1.0": low}
-            
-        return {
-            "0.0": high,
-            "0.236": high - diff * 0.236,
-            "0.382": high - diff * 0.382,
-            "0.5": high - diff * 0.5,
-            "0.618": high - diff * 0.618,
-            "0.786": high - diff * 0.786,
-            "1.0": low,
-            "1.272": low - diff * 0.272,
-            "1.414": low - diff * 0.414,
-            "1.618": low - diff * 0.618
-        }
-    except Exception as e:
-        logger.error(f"❌ Error calculating Fibonacci levels: {e}")
-        return {"0.0": df['close'].iloc[-1], "1.0": df['close'].iloc[-1]}
-
-# ================= DIVERGENCE DETECTION =================
-def detect_all_divergences(df, lookback=14):
-    """Детектира различен тип на дивергенции"""
-    divergences = []
-    
-    if df.empty or 'RSI' not in df.columns:
-        return divergences
-    
-    try:
-        # Use only recent data for divergence detection
-        recent_df = df.tail(30) if len(df) > 30 else df
-        
-        # RSI дивергенција
-        rsi = recent_df['RSI'].values
-        price = recent_df['close'].values
-        
-        # Најди peaks и troughs за цена и RSI
-        price_peaks = [i for i in range(lookback, len(recent_df)-lookback) 
-                      if price[i] == max(price[i-lookback:i+lookback+1])]
-        price_troughs = [i for i in range(lookback, len(recent_df)-lookback) 
-                        if price[i] == min(price[i-lookback:i+lookback+1])]
-        
-        rsi_peaks = [i for i in range(lookback, len(recent_df)-lookback) 
-                    if rsi[i] == max(rsi[i-lookback:i+lookback+1])]
-        rsi_troughs = [i for i in range(lookback, len(recent_df)-lookback) 
-                      if rsi[i] == min(rsi[i-lookback:i+lookback+1])]
-        
-        # Regular bearish дивергенција (цената прави повисоки врвови, RSI пониски)
-        for i in range(1, min(len(price_peaks), len(rsi_peaks))):
-            if (price[price_peaks[i]] > price[price_peaks[i-1]] and
-                rsi[rsi_peaks[i]] < rsi[rsi_peaks[i-1]]):
-                divergences.append(('BEARISH_DIVERGENCE', price_peaks[i], 'RSI'))
-        
-        # Regular bullish дивергенција (цената прави пониски дна, RSI повисоки)
-        for i in range(1, min(len(price_troughs), len(rsi_troughs))):
-            if (price[price_troughs[i]] < price[price_troughs[i-1]] and
-                rsi[rsi_troughs[i]] > rsi[rsi_troughs[i-1]]):
-                divergences.append(('BULLISH_DIVERGENCE', price_troughs[i], 'RSI'))
-    
-    except Exception as e:
-        logger.error(f"❌ Error detecting divergences: {e}")
-    
-    return divergences
-
-# ================= CANDLE PATTERNS =================
-def detect_candle_patterns(df):
-    patterns = []
-    if len(df) < 2:
-        return patterns
-        
-    try:
-        # Use only last 2 candles for pattern detection
-        open_price = df['open'].iloc[-1]
-        close_price = df['close'].iloc[-1]
-        high_price = df['high'].iloc[-1]
-        low_price = df['low'].iloc[-1]
-        prev_open = df['open'].iloc[-2]
-        prev_close = df['close'].iloc[-2]
-        
-        # Calculate candle properties
-        body = abs(close_price - open_price)
-        total_range = high_price - low_price
-        if total_range == 0:
-            return patterns
-            
-        upper_wick = high_price - max(open_price, close_price)
-        lower_wick = min(open_price, close_price) - low_price
-        
-        # Doji pattern
-        if body < total_range * 0.1:
-            patterns.append("DOJI")
-        
-        # Hammer pattern
-        if lower_wick > body * 2 and upper_wick < body * 0.1 and close_price > open_price:
-            patterns.append("HAMMER")
-        
-        # Shooting Star pattern
-        if upper_wick > body * 2 and lower_wick < body * 0.1 and close_price < open_price:
-            patterns.append("SHOOTING_STAR")
-        
-        # Engulfing pattern
-        prev_body = abs(prev_close - prev_open)
-        if (body > prev_body * 1.5 and
-            ((close_price > open_price and prev_close < prev_open and close_price > prev_open and open_price < prev_close) or
-             (close_price < open_price and prev_close > prev_open and close_price < prev_open and open_price > prev_close))):
-            patterns.append("BULLISH_ENGULFING" if close_price > open_price else "BEARISH_ENGULFING")
-    
-    except Exception as e:
-        logger.error(f"❌ Error detecting candle patterns: {e}")
-    
-    return patterns
-
-# ================= ENHANCED PRICE TARGETS =================
-def calculate_precise_price_targets(df, current_price):
-    """Пресметува прецизни buy/sell цели комбинирајќи повеќе методи"""
-    targets = {
-        'buy_targets': [],
-        'sell_targets': [],
-        'confidence': 0
-    }
-    
-    if df.empty:
-        return targets
-    
-    try:
-        # 1. Fibonacci нивоа
-        fib_levels_dict = fib_levels(df)
-        for level, price in fib_levels_dict.items():
-            if price < current_price:
-                targets['buy_targets'].append(('Fibonacci ' + level, price, 0.7))
-            else:
-                targets['sell_targets'].append(('Fibonacci ' + level, price, 0.7))
-        
-        # 2. Volume Profile POC и Value Area
-        volume_profile = calculate_volume_profile(df)
-        targets['buy_targets'].append(('Volume POC', volume_profile['poc'], 0.8))
-        targets['buy_targets'].append(('Value Area Low', volume_profile['value_area_low'], 0.6))
-        targets['sell_targets'].append(('Value Area High', volume_profile['value_area_high'], 0.6))
-        
-        # 3. VWAP нивоа
-        df_with_vwap = calculate_advanced_vwap(df)
-        vwap = df_with_vwap['VWAP'].iloc[-1] if 'VWAP' in df_with_vwap.columns else current_price
-        vwap_upper = df_with_vwap['VWAP_upper_1'].iloc[-1] if 'VWAP_upper_1' in df_with_vwap.columns else current_price * 1.02
-        vwap_lower = df_with_vwap['VWAP_lower_1'].iloc[-1] if 'VWAP_lower_1' in df_with_vwap.columns else current_price * 0.98
-        
-        targets['buy_targets'].append(('VWAP Support', vwap_lower, 0.6))
-        targets['buy_targets'].append(('VWAP', vwap, 0.5))
-        targets['sell_targets'].append(('VWAP Resistance', vwap_upper, 0.6))
-        
-        # 4. Подредување на целите според confidence и растојание од тековната цена
-        def sort_and_filter(target_list, current_price, is_buy=True):
-            # Филтрирај цели кои се соодветно позиционирани
-            if is_buy:
-                filtered = [t for t in target_list if t[1] < current_price * 0.98]  # Барем 2% подолу
-            else:
-                filtered = [t for t in target_list if t[1] > current_price * 1.02]  # Барем 2% погоре
-            
-            # Сортирај по confidence (3ти елемент)
-            filtered.sort(key=lambda x: x[2], reverse=True)
-            
-            # Групирај слични цели (во ренџ од 1%)
-            grouped = []
-            for target in filtered:
-                name, price, confidence = target
-                found_group = False
-                for i, group in enumerate(grouped):
-                    if abs(price - group[1]) / group[1] < 0.01:  # Within 1%
-                        # Агрегирај ги целите
-                        grouped[i] = (
-                            f"{group[0]}+{name}",
-                            (group[1] + price) / 2,  # Просечна цена
-                            max(group[2], confidence)  # Највисок confidence
-                        )
-                        found_group = True
-                        break
-                
-                if not found_group:
-                    grouped.append(target)
-            
-            return grouped[:3]  # Врати ги топ 3 цели
-        
-        targets['buy_targets'] = sort_and_filter(targets['buy_targets'], current_price, True)
-        targets['sell_targets'] = sort_and_filter(targets['sell_targets'], current_price, False)
-        
-        # Пресметај го overall confidence
-        if targets['buy_targets'] and targets['sell_targets']:
-            buy_conf = sum(t[2] for t in targets['buy_targets']) / len(targets['buy_targets'])
-            sell_conf = sum(t[2] for t in targets['sell_targets']) / len(targets['sell_targets'])
-            targets['confidence'] = (buy_conf + sell_conf) / 2
-    
-    except Exception as e:
-        logger.error(f"❌ Error calculating price targets: {e}")
-    
-    return targets
-
-# ================= TREND ANALYSIS =================
-def is_bullish_trend(df):
-    if df.empty or 'EMA_20' not in df.columns:
-        return False
-    return df['close'].iloc[-1] > df['EMA_20'].iloc[-1]
-
-def is_bearish_trend(df):
-    if df.empty or 'EMA_20' not in df.columns:
-        return False
-    return df['close'].iloc[-1] < df['EMA_20'].iloc[-1]
-
-# ================= SIMPLIFIED SIGNAL GENERATION =================
+# ================= ENHANCED SIGNAL GENERATION =================
 def generate_final_signal(df, volume_profile, divergences, price_targets, bullish, bearish):
-    """Генерира финален торговен сигнал"""
+    """Генерира финален торговен сигнал СО ПОНИЗОК ПРАГ И ПОВЕЌЕ ИНДИКАТОРИ"""
     try:
         signal_strength = 0
         signal_direction = "HOLD"
         current_price = df['close'].iloc[-1]
         
-        # 1. RSI signals
+        # 1. RSI signals - ПОНИСКИ ПРАЗОВИ
         rsi = df['RSI'].iloc[-1] if 'RSI' in df.columns else 50
-        if rsi < 30:
-            signal_strength += 3
+        if rsi < 35:  # Променето од 30 на 35
+            signal_strength += 2.5  # Променето од 3 на 2.5
             signal_direction = "BUY"
-        elif rsi > 70:
-            signal_strength += 3
+        elif rsi > 65:  # Променето од 70 на 65
+            signal_strength += 2.5  # Променето од 3 на 2.5
             signal_direction = "SELL"
+        elif rsi < 40:  # Додаден умерен RSI сигнал
+            signal_strength += 1.5
+            if signal_direction == "HOLD":
+                signal_direction = "BUY"
+        elif rsi > 60:  # Додаден умерен RSI сигнал
+            signal_strength += 1.5  
+            if signal_direction == "HOLD":
+                signal_direction = "SELL"
         
-        # 2. MACD signals
+        # 2. MACD signals - СО СИЛА НА СИГНАЛОТ
         if 'MACD' in df.columns and 'MACD_signal' in df.columns and len(df) > 1:
             macd = df['MACD'].iloc[-1]
             macd_signal = df['MACD_signal'].iloc[-1]
-            if macd > macd_signal:
-                signal_strength += 2
-                signal_direction = "BUY" if signal_strength < 3 else signal_direction
-            else:
-                signal_strength += 2
-                signal_direction = "SELL" if signal_strength < 3 else signal_direction
+            macd_histogram = df['MACD_histogram'].iloc[-1] if 'MACD_histogram' in df.columns else 0
+            
+            # Пресметај ја силата на MACD сигналот
+            macd_strength = abs(macd_histogram) / (abs(macd_signal) + 0.0001)  # Avoid division by zero
+            
+            if macd > macd_signal and macd_strength > 0.02:  # Додаден strength check
+                signal_strength += 1.5  # Променето од 2 на 1.5
+                if signal_direction == "HOLD":
+                    signal_direction = "BUY"
+            elif macd < macd_signal and macd_strength > 0.02:
+                signal_strength += 1.5  # Променето од 2 на 1.5
+                if signal_direction == "HOLD":
+                    signal_direction = "SELL"
         
         # 3. Trend signals
         if bullish:
-            signal_strength += 1
+            signal_strength += 1.2  # Зголемена важност на трендот
+            if signal_direction == "HOLD":
+                signal_direction = "BUY"
         elif bearish:
-            signal_strength -= 1
+            signal_strength += 1.2  # Зголемена важност на трендот
+            if signal_direction == "HOLD":
+                signal_direction = "SELL"
         
-        # 4. Final decision
-        if abs(signal_strength) >= 3:  # Lower threshold
+        # 4. Volume confirmation
+        if 'volume' in df.columns and len(df) > 5:
+            current_volume = df['volume'].iloc[-1]
+            avg_volume = df['volume'].tail(20).mean()
+            if current_volume > avg_volume * 1.3:  # Volume confirmation
+                signal_strength += 0.8
+        
+        # 5. Bollinger Bands position
+        if 'BB_lower' in df.columns and 'BB_upper' in df.columns:
+            bb_position = (current_price - df['BB_lower'].iloc[-1]) / (df['BB_upper'].iloc[-1] - df['BB_lower'].iloc[-1])
+            if bb_position < 0.2:  # Near lower band
+                signal_strength += 1.0
+                if signal_direction == "HOLD":
+                    signal_direction = "BUY"
+            elif bb_position > 0.8:  # Near upper band
+                signal_strength += 1.0
+                if signal_direction == "HOLD":
+                    signal_direction = "SELL"
+        
+        # 6. Stochastic signals
+        if 'STOCH_K' in df.columns and 'STOCH_D' in df.columns:
+            stoch_k = df['STOCH_K'].iloc[-1]
+            stoch_d = df['STOCH_D'].iloc[-1]
+            if stoch_k < 20 and stoch_d < 20:  # Oversold
+                signal_strength += 1.0
+                if signal_direction == "HOLD":
+                    signal_direction = "BUY"
+            elif stoch_k > 80 and stoch_d > 80:  # Overbought
+                signal_strength += 1.0
+                if signal_direction == "HOLD":
+                    signal_direction = "SELL"
+        
+        # 7. Price action - support/resistance
+        if len(df) > 10:
+            recent_high = df['high'].tail(10).max()
+            recent_low = df['low'].tail(10).min()
+            price_range = recent_high - recent_low
+            
+            if price_range > 0:
+                price_position = (current_price - recent_low) / price_range
+                if price_position < 0.3:  # Near support
+                    signal_strength += 0.8
+                    if signal_direction == "HOLD":
+                        signal_direction = "BUY"
+                elif price_position > 0.7:  # Near resistance
+                    signal_strength += 0.8
+                    if signal_direction == "HOLD":
+                        signal_direction = "SELL"
+        
+        # 8. Final decision - ПОНИЗОК ПРАГ
+        if abs(signal_strength) >= 2.0:  # Променето од 3 на 2
             return {
                 'direction': signal_direction,
                 'strength': min(abs(signal_strength), 10),
-                'buy_targets': price_targets['buy_targets'][:2],  # Only top 2 targets
-                'sell_targets': price_targets['sell_targets'][:2], # Only top 2 targets
-                'confidence': min(abs(signal_strength) / 10.0, 1.0)
+                'buy_targets': price_targets['buy_targets'][:2],
+                'sell_targets': price_targets['sell_targets'][:2],
+                'confidence': min(abs(signal_strength) / 10.0, 1.0),
+                'rsi': rsi,
+                'details': f"RSI: {rsi:.1f}, Strength: {signal_strength:.1f}"
             }
         else:
             return {
@@ -773,7 +525,9 @@ def generate_final_signal(df, volume_profile, divergences, price_targets, bullis
                 'strength': 0,
                 'buy_targets': [],
                 'sell_targets': [],
-                'confidence': 0
+                'confidence': 0,
+                'rsi': rsi,
+                'details': f"RSI: {rsi:.1f}, Strength: {signal_strength:.1f}"
             }
             
     except Exception as e:
@@ -783,40 +537,9 @@ def generate_final_signal(df, volume_profile, divergences, price_targets, bullis
             'strength': 0,
             'buy_targets': [],
             'sell_targets': [],
-            'confidence': 0
+            'confidence': 0,
+            'details': f"Error: {e}"
         }
-
-# ================= ML MODEL =================
-def train_ml_model(df: pd.DataFrame, token: str):
-    if not SKLEARN_AVAILABLE:
-        return
-        
-    try:
-        df = add_indicators(df)
-        if len(df) < 10:  # Need enough data
-            return
-            
-        df["target"] = (df["close"].shift(-1) - df["close"]).apply(lambda x: 1 if x > 0 else -1 if x < 0 else 0)
-        
-        features = ["EMA_20", "EMA_50", "RSI", "OBV", "MACD", "BB_upper", "BB_middle", "BB_lower"]
-        
-        # Keep only features that exist in the dataframe
-        available_features = [f for f in features if f in df.columns]
-        df = df.dropna(subset=available_features + ["target"])
-        
-        if len(df) < 20:  # Need enough data
-            return
-        
-        X = df[available_features]
-        y = df["target"]
-        
-        clf = RandomForestClassifier(n_estimators=50, random_state=42, max_depth=8)
-        clf.fit(X, y)
-        ml_models[token] = clf
-        logger.info(f"✅ ML model trained for {token} with {len(df)} samples")
-    
-    except Exception as e:
-        logger.error(f"❌ Error training ML model for {token}: {e}")
 
 # ================= ENHANCED ANALYZE SYMBOL =================
 async def enhanced_analyze_symbol(symbol: str):
@@ -869,7 +592,8 @@ async def enhanced_analyze_symbol(symbol: str):
         logger.info(f"   - RSI: {rsi:.2f}")
         logger.info(f"   - MACD: {macd:.6f} > Signal: {macd_signal:.6f} = {macd > macd_signal}")
         logger.info(f"   - Trend: {'BULLISH' if bullish_trend else 'BEARISH' if bearish_trend else 'NEUTRAL'}")
-        logger.info(f"   - Signal: {final_signal['direction']} (Strength: {final_signal['strength']})")
+        logger.info(f"   - Signal: {final_signal['direction']} (Strength: {final_signal['strength']:.1f})")
+        logger.info(f"   - Details: {final_signal.get('details', 'N/A')}")
         
         # Подготви извештај
         report = {
@@ -892,54 +616,20 @@ async def enhanced_analyze_symbol(symbol: str):
         logger.error(f"❌ Error analyzing {symbol}: {e}")
         return None
 
-# ================= RISK MANAGEMENT =================
-def calculate_position_size(atr, current_price, portfolio_value, risk_per_trade=0.02):
-    """
-    Calculate position size based on volatility (ATR).
-    risk_per_trade: 2% of portfolio per trade
-    """
-    try:
-        dollar_risk = portfolio_value * risk_per_trade
-        atr_dollars = atr * current_price  # ATR in dollars
-        if atr_dollars == 0:
-            return 0.001
-        position_size = dollar_risk / (atr_dollars * 2)  # Use 2x ATR for stop loss
-        return max(0.001, position_size)  # Minimum position size
-    except Exception as e:
-        logger.error(f"❌ Error calculating position size: {e}")
-        return 0.001
-
-# ================= DEBUG KUCOIN CONNECTION =================
-async def debug_kucoin_connection():
-    """Debug KuCoin connection"""
-    if not market_client:
-        logger.error("❌ KuCoin client not available for debug")
-        return False
-    
-    try:
-        test_symbol = "BTC-USDT"
-        logger.info(f"🔧 Testing KuCoin with {test_symbol}...")
-        
-        # Test ticker
-        ticker = market_client.get_ticker(test_symbol)
-        logger.info(f"✅ KuCoin ticker: {format_price(float(ticker.get('price', 0)))}")
-        
-        # Test klines
-        klines = market_client.get_kline_data(test_symbol, '1hour', limit=5)
-        logger.info(f"✅ KuCoin klines: {len(klines)} candles")
-        
-        return True
-    except Exception as e:
-        logger.error(f"❌ KuCoin debug failed: {e}")
-        return False
-
 # ================= MAIN EXECUTION =================
 async def github_actions_production():
-    """Production режим за GitHub Actions со вистински податоци и Telegram - SIMPLIFIED"""
+    """Production режим за GitHub Actions со вистински податоци и Telegram"""
     logger.info("🚀 Starting analysis with real market data...")
     
     # Debug KuCoin connection first
-    await debug_kucoin_connection()
+    from kucoin.client import Client
+    if market_client:
+        try:
+            test_symbol = "BTC-USDT"
+            ticker = market_client.get_ticker(test_symbol)
+            logger.info(f"✅ KuCoin ticker: {format_price(float(ticker.get('price', 0)))}")
+        except Exception as e:
+            logger.error(f"❌ KuCoin debug failed: {e}")
     
     # Check Telegram configuration
     if not TELEGRAM_AVAILABLE:
@@ -964,26 +654,7 @@ async def github_actions_production():
     logger.info("🔍 Running detailed symbol analysis...")
     await debug_symbol_analysis()
     
-    # Провери ги податоците за сите симболи
-    await check_all_symbols_data()
-    
-    # Train ML models with real data
-    if SKLEARN_AVAILABLE:
-        logger.info("📚 Training ML models...")
-        for sym in TOKENS:
-            symbol = sym + "-USDT"
-            try:
-                df = await fetch_kucoin_candles(symbol, "1d", 200)
-                if not df.empty:
-                    logger.info(f"📈 Data for {symbol}: {len(df)} candles, last price: {format_price(df['close'].iloc[-1])}")
-                    train_ml_model(df, sym)
-                    logger.info(f"✅ Trained model for {symbol}")
-                else:
-                    logger.warning(f"⚠️ No data for {symbol}")
-            except Exception as e:
-                logger.error(f"Error training {symbol}: {e}")
-    
-    # Analyze all tokens and send ONLY meaningful signals
+    # Analyze all tokens and send signals
     logger.info("🔍 Analyzing tokens for Telegram signals...")
     strong_signals = 0
     analyzed_tokens = 0
@@ -997,19 +668,23 @@ async def github_actions_production():
                 analyzed_tokens += 1
                 signal = report['signal']
                 
-                logger.info(f"📊 {symbol} Telegram analysis: {signal['direction']} (Strength: {signal['strength']}/10)")
+                logger.info(f"📊 {symbol} Telegram analysis: {signal['direction']} (Strength: {signal['strength']:.1f}/10)")
                 
-                # Send message ONLY for meaningful signals (strength >= 3)
-                if signal['strength'] >= 3:
+                # Send message for signals with strength >= 2 (променето од 3)
+                if signal['strength'] >= 2.0:  # Променето од 3 на 2
                     # Create clean signal message
                     direction_emoji = "🟢" if signal['direction'] == "BUY" else "🔴" if signal['direction'] == "SELL" else "🟡"
                     
                     msg = (f"{direction_emoji} **{signal['direction']} SIGNAL** {direction_emoji}\n"
                            f"📊 **{symbol}**\n"
                            f"💰 **Price: {format_price(report['current_price'])}**\n"
-                           f"💪 Strength: {signal['strength']}/10\n"
+                           f"💪 Strength: {signal['strength']:.1f}/10\n"
                            f"📈 Trend: {report['trend']}\n"
                            f"📊 RSI: {report.get('rsi', 'N/A'):.2f}")
+                    
+                    # Add signal details
+                    if 'details' in signal:
+                        msg += f"\n📋 {signal['details']}"
                     
                     # Add targets if available
                     if signal['buy_targets']:
@@ -1027,14 +702,14 @@ async def github_actions_production():
                     success = await send_telegram(msg)
                     if success:
                         strong_signals += 1
-                        logger.info(f"✅ Sent signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
+                        logger.info(f"✅ Sent signal for {symbol}: {signal['direction']} (Strength: {signal['strength']:.1f})")
                     else:
                         logger.error(f"❌ Failed to send Telegram for {symbol}")
                     
                     # Wait between messages
                     await asyncio.sleep(2)
                 else:
-                    logger.info(f"⏭️  Skipping weak signal for {symbol}: {signal['direction']} (Strength: {signal['strength']})")
+                    logger.info(f"⏭️  Skipping weak signal for {symbol}: {signal['direction']} (Strength: {signal['strength']:.1f})")
             else:
                 logger.warning(f"⚠️ No report generated for {symbol}")
                 
