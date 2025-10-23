@@ -336,14 +336,58 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         true_range = np.max(ranges, axis=1)
         df['ATR'] = true_range.rolling(14).mean()
         
-        # Fill NaN values instead of dropping them
+        # Fill NaN values - FIXED: use ffill() and bfill() instead of fillna with method
         numeric_columns = df.select_dtypes(include=[np.number]).columns
-        df[numeric_columns] = df[numeric_columns].fillna(method='bfill').fillna(method='ffill')
+        df[numeric_columns] = df[numeric_columns].bfill().ffill()
         
     except Exception as e:
         logger.error(f"❌ Error calculating indicators: {e}")
     
     return df
+
+# ================= DIVERGENCE DETECTION =================
+def detect_all_divergences(df, lookback=14):
+    """Детектира различен тип на дивергенции"""
+    divergences = []
+    
+    if df.empty or 'RSI' not in df.columns:
+        return divergences
+    
+    try:
+        # Use only recent data for divergence detection
+        recent_df = df.tail(30) if len(df) > 30 else df
+        
+        # RSI дивергенција
+        rsi = recent_df['RSI'].values
+        price = recent_df['close'].values
+        
+        # Најди peaks и troughs за цена и RSI
+        price_peaks = [i for i in range(lookback, len(recent_df)-lookback) 
+                      if price[i] == max(price[i-lookback:i+lookback+1])]
+        price_troughs = [i for i in range(lookback, len(recent_df)-lookback) 
+                        if price[i] == min(price[i-lookback:i+lookback+1])]
+        
+        rsi_peaks = [i for i in range(lookback, len(recent_df)-lookback) 
+                    if rsi[i] == max(rsi[i-lookback:i+lookback+1])]
+        rsi_troughs = [i for i in range(lookback, len(recent_df)-lookback) 
+                      if rsi[i] == min(rsi[i-lookback:i+lookback+1])]
+        
+        # Regular bearish дивергенција (цената прави повисоки врвови, RSI пониски)
+        for i in range(1, min(len(price_peaks), len(rsi_peaks))):
+            if (price[price_peaks[i]] > price[price_peaks[i-1]] and
+                rsi[rsi_peaks[i]] < rsi[rsi_peaks[i-1]]):
+                divergences.append(('BEARISH_DIVERGENCE', price_peaks[i], 'RSI'))
+        
+        # Regular bullish дивергенција (цената прави пониски дна, RSI повисоки)
+        for i in range(1, min(len(price_troughs), len(rsi_troughs))):
+            if (price[price_troughs[i]] < price[price_troughs[i-1]] and
+                rsi[rsi_troughs[i]] > rsi[rsi_troughs[i-1]]):
+                divergences.append(('BULLISH_DIVERGENCE', price_troughs[i], 'RSI'))
+    
+    except Exception as e:
+        logger.error(f"❌ Error detecting divergences: {e}")
+    
+    return divergences
 
 # ================= VOLUME PROFILE & VWAP =================
 def calculate_volume_profile(df, num_bins=20):
@@ -405,6 +449,125 @@ def calculate_volume_profile(df, num_bins=20):
     except Exception as e:
         logger.error(f"❌ Error calculating volume profile: {e}")
         return {'poc': df['close'].iloc[-1], 'value_area_high': df['close'].iloc[-1], 'value_area_low': df['close'].iloc[-1], 'volume_profile': {}}
+
+# ================= FIBONACCI & ELLIOTT WAVE =================
+def fib_levels(df, lookback=100):
+    if df.empty:
+        return {}
+        
+    try:
+        recent = df.tail(lookback)
+        high, low = recent["high"].max(), recent["low"].min()
+        diff = high - low
+        if diff == 0:
+            return {"0.0": high, "1.0": low}
+            
+        return {
+            "0.0": high,
+            "0.236": high - diff * 0.236,
+            "0.382": high - diff * 0.382,
+            "0.5": high - diff * 0.5,
+            "0.618": high - diff * 0.618,
+            "0.786": high - diff * 0.786,
+            "1.0": low,
+            "1.272": low - diff * 0.272,
+            "1.414": low - diff * 0.414,
+            "1.618": low - diff * 0.618
+        }
+    except Exception as e:
+        logger.error(f"❌ Error calculating Fibonacci levels: {e}")
+        return {"0.0": df['close'].iloc[-1], "1.0": df['close'].iloc[-1]}
+
+# ================= ENHANCED PRICE TARGETS =================
+def calculate_precise_price_targets(df, current_price):
+    """Пресметува прецизни buy/sell цели комбинирајќи повеќе методи"""
+    targets = {
+        'buy_targets': [],
+        'sell_targets': [],
+        'confidence': 0
+    }
+    
+    if df.empty:
+        return targets
+    
+    try:
+        # 1. Fibonacci нивоа
+        fib_levels_dict = fib_levels(df)
+        for level, price in fib_levels_dict.items():
+            if price < current_price:
+                targets['buy_targets'].append(('Fibonacci ' + level, price, 0.7))
+            else:
+                targets['sell_targets'].append(('Fibonacci ' + level, price, 0.7))
+        
+        # 2. Volume Profile POC и Value Area
+        volume_profile = calculate_volume_profile(df)
+        targets['buy_targets'].append(('Volume POC', volume_profile['poc'], 0.8))
+        targets['buy_targets'].append(('Value Area Low', volume_profile['value_area_low'], 0.6))
+        targets['sell_targets'].append(('Value Area High', volume_profile['value_area_high'], 0.6))
+        
+        # 3. VWAP нивоа
+        vwap = df['VWAP'].iloc[-1] if 'VWAP' in df.columns else current_price
+        
+        targets['buy_targets'].append(('VWAP Support', vwap * 0.98, 0.6))
+        targets['buy_targets'].append(('VWAP', vwap, 0.5))
+        targets['sell_targets'].append(('VWAP Resistance', vwap * 1.02, 0.6))
+        
+        # 4. Подредување на целите според confidence и растојание од тековната цена
+        def sort_and_filter(target_list, current_price, is_buy=True):
+            # Филтрирај цели кои се соодветно позиционирани
+            if is_buy:
+                filtered = [t for t in target_list if t[1] < current_price * 0.98]  # Барем 2% подолу
+            else:
+                filtered = [t for t in target_list if t[1] > current_price * 1.02]  # Барем 2% погоре
+            
+            # Сортирај по confidence (3ти елемент)
+            filtered.sort(key=lambda x: x[2], reverse=True)
+            
+            # Групирај слични цели (во ренџ од 1%)
+            grouped = []
+            for target in filtered:
+                name, price, confidence = target
+                found_group = False
+                for i, group in enumerate(grouped):
+                    if abs(price - group[1]) / group[1] < 0.01:  # Within 1%
+                        # Агрегирај ги целите
+                        grouped[i] = (
+                            f"{group[0]}+{name}",
+                            (group[1] + price) / 2,  # Просечна цена
+                            max(group[2], confidence)  # Највисок confidence
+                        )
+                        found_group = True
+                        break
+                
+                if not found_group:
+                    grouped.append(target)
+            
+            return grouped[:3]  # Врати ги топ 3 цели
+        
+        targets['buy_targets'] = sort_and_filter(targets['buy_targets'], current_price, True)
+        targets['sell_targets'] = sort_and_filter(targets['sell_targets'], current_price, False)
+        
+        # Пресметај го overall confidence
+        if targets['buy_targets'] and targets['sell_targets']:
+            buy_conf = sum(t[2] for t in targets['buy_targets']) / len(targets['buy_targets'])
+            sell_conf = sum(t[2] for t in targets['sell_targets']) / len(targets['sell_targets'])
+            targets['confidence'] = (buy_conf + sell_conf) / 2
+    
+    except Exception as e:
+        logger.error(f"❌ Error calculating price targets: {e}")
+    
+    return targets
+
+# ================= TREND ANALYSIS =================
+def is_bullish_trend(df):
+    if df.empty or 'EMA_20' not in df.columns:
+        return False
+    return df['close'].iloc[-1] > df['EMA_20'].iloc[-1]
+
+def is_bearish_trend(df):
+    if df.empty or 'EMA_20' not in df.columns:
+        return False
+    return df['close'].iloc[-1] < df['EMA_20'].iloc[-1]
 
 # ================= ENHANCED SIGNAL GENERATION =================
 def generate_final_signal(df, volume_profile, divergences, price_targets, bullish, bearish):
@@ -546,7 +709,7 @@ async def enhanced_analyze_symbol(symbol: str):
     """Напредна анализа на симбол со сите индикатори"""
     try:
         # Земи податоци од дневен тајмфрејм
-        daily_df = await fetch_kucoin_candles(symbol, "1d", 200)
+        daily_df = await fetch_kucoin_candles(symbol, "1d", 100)  # Reduced to 100 for faster processing
         if daily_df.empty:
             logger.error(f"❌ No data available for {symbol} - skipping")
             return None
@@ -620,16 +783,6 @@ async def enhanced_analyze_symbol(symbol: str):
 async def github_actions_production():
     """Production режим за GitHub Actions со вистински податоци и Telegram"""
     logger.info("🚀 Starting analysis with real market data...")
-    
-    # Debug KuCoin connection first
-    from kucoin.client import Client
-    if market_client:
-        try:
-            test_symbol = "BTC-USDT"
-            ticker = market_client.get_ticker(test_symbol)
-            logger.info(f"✅ KuCoin ticker: {format_price(float(ticker.get('price', 0)))}")
-        except Exception as e:
-            logger.error(f"❌ KuCoin debug failed: {e}")
     
     # Check Telegram configuration
     if not TELEGRAM_AVAILABLE:
