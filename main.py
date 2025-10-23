@@ -91,22 +91,24 @@ try:
     from kucoin.client import Client
     
     if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
-        # For python-kucoin version 2.2.0 - use positional arguments
+        # For python-kucoin version 2.2.0
         market_client = Client(
-            KUCOIN_API_KEY,           # api_key (positional)
-            KUCOIN_API_SECRET,        # api_secret (positional) 
-            KUCOIN_API_PASSPHRASE     # api_passphrase (positional)
+            KUCOIN_API_KEY,
+            KUCOIN_API_SECRET, 
+            KUCOIN_API_PASSPHRASE
         )
-        logger.info("✅ KuCoin client initialized successfully (v2.2.0)")
+        logger.info("✅ KuCoin client initialized successfully")
         
-        # Test the connection
+        # Simple test - try to get ticker data to verify connection
         try:
-            # Simple API call to verify connection
-            server_time = market_client.get_server_timestamp()
-            logger.info(f"✅ KuCoin connection test passed - Server time: {server_time}")
+            test_symbol = "BTC-USDT"
+            test_data = market_client.get_ticker(test_symbol)
+            if test_data:
+                logger.info(f"✅ KuCoin connection verified - {test_symbol} data received")
+            else:
+                logger.warning("⚠️ KuCoin test returned no data, but client is initialized")
         except Exception as e:
-            logger.error(f"❌ KuCoin connection test failed: {e}")
-            market_client = None
+            logger.warning(f"⚠️ KuCoin test call failed, but client may still work: {e}")
             
     else:
         logger.warning("❌ KuCoin client not initialized - missing API keys")
@@ -117,6 +119,7 @@ except ImportError as e:
 except Exception as e:
     logger.error(f"❌ KuCoin client initialization failed: {e}")
     market_client = None
+
 # ================= TELEGRAM BOT INIT =================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -182,33 +185,32 @@ async def fetch_kucoin_candles(symbol: str, tf: str = "1d", limit: int = 200):
     interval = interval_map.get(tf, "1day")
     
     try:
-        # Use the correct method for kucoin client - FIXED
+        # Use the correct method for kucoin client
         candles = market_client.get_kline(symbol, interval, limit=limit)
         
         if not candles:
             logger.error(f"❌ No data returned for {symbol}")
             return pd.DataFrame()
         
-        # Check if candles is a list of lists (original format)
-        if candles and isinstance(candles, list) and len(candles) > 0:
-            if isinstance(candles[0], list):
-                # Original format: [timestamp, open, close, high, low, volume, turnover]
-                df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
-            else:
-                # New format or different structure
-                logger.error(f"❌ Unexpected data format for {symbol}")
-                return pd.DataFrame()
-        else:
-            logger.error(f"❌ Empty or invalid data for {symbol}")
-            return pd.DataFrame()
+        # KuCoin returns data in format: [timestamp, open, close, high, low, volume, turnover]
+        df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
         
+        # Convert to numeric types
         for col in ["open", "close", "high", "low", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        # Remove rows with invalid data
         df = df.dropna(subset=["close", "volume"])
+        
+        # Convert timestamp
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
         
+        # Sort by timestamp and return
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        
         logger.info(f"✅ Successfully fetched {len(df)} candles for {symbol}. Last price: ${df['close'].iloc[-1]:.2f}")
-        return df.sort_values("timestamp").reset_index(drop=True)[["timestamp", "open", "high", "low", "close", "volume"]]
+        return df[["timestamp", "open", "high", "low", "close", "volume"]]
+        
     except Exception as e:
         logger.error(f"❌ Error fetching {symbol}: {e}")
         return pd.DataFrame()
@@ -1132,10 +1134,38 @@ async def test_configuration():
     
     logger.info("🔧 Configuration test completed")
 
+# ================= DEBUG KUCOIN CONNECTION =================
+async def debug_kucoin_connection():
+    """Debug KuCoin connection"""
+    if market_client:
+        try:
+            # Test with a simple symbol
+            test_symbol = "BTC-USDT"
+            logger.info(f"🔧 Testing KuCoin with {test_symbol}...")
+            
+            # Try to get ticker data
+            ticker = market_client.get_ticker(test_symbol)
+            logger.info(f"✅ KuCoin ticker test: {ticker}")
+            
+            # Try to get kline data
+            klines = market_client.get_kline(test_symbol, '1hour', limit=5)
+            logger.info(f"✅ KuCoin klines test: {len(klines)} candles received")
+            
+            return True
+        except Exception as e:
+            logger.error(f"❌ KuCoin debug failed: {e}")
+            return False
+    else:
+        logger.error("❌ KuCoin client not available for debug")
+        return False
+
 # ================= MAIN EXECUTION =================
 async def github_actions_production():
     """Production режим за GitHub Actions со вистински податоци и Telegram - SIMPLIFIED"""
     logger.info("🚀 Starting analysis with real market data...")
+    
+    # Debug KuCoin connection first
+    await debug_kucoin_connection()
     
     # Check Telegram configuration
     if not TELEGRAM_AVAILABLE:
