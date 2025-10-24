@@ -8,6 +8,7 @@ QUANTUM HYBRID BOT v3.0 - COMPLETE ENHANCED VERSION
 - Lightweight Deep Learning
 - Quantum-Inspired Optimization
 - Real-time Adaptation
+- COMPATIBLE WITH python-kucoin 2.2.0
 """
 
 import os, asyncio, logging, math, random, json, aiohttp
@@ -17,10 +18,10 @@ from datetime import datetime, timedelta
 # ================= KUCOIN IMPORT FIX =================
 try:
     from kucoin.client import Client
-    market_client = None
+    KUCOIN_AVAILABLE = True
 except ImportError as e:
     print(f"KuCoin import error: {e}")
-    market_client = None
+    KUCOIN_AVAILABLE = False
 
 from telegram import Bot
 from sklearn.ensemble import RandomForestClassifier
@@ -45,20 +46,37 @@ KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
 KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
 KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
 
-# Initialize market client
-if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
-    try:
+# ================= FIXED KUCOIN CLIENT INIT =================
+market_client = None
+try:
+    if KUCOIN_AVAILABLE and KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
+        # CORRECT initialization for python-kucoin 2.2.0
         market_client = Client(
-            api_key=KUCOIN_API_KEY,
-            api_secret=KUCOIN_API_SECRET,
-            api_passphrase=KUCOIN_API_PASSPHRASE
+            KUCOIN_API_KEY,           # positional argument - no api_key=
+            KUCOIN_API_SECRET,        # positional argument - no api_secret=  
+            KUCOIN_API_PASSPHRASE,    # positional argument - no api_passphrase=
+            sandbox=False             # sandbox parameter
         )
-        logger.info("✅ KuCoin client initialized successfully")
-    except Exception as e:
-        print(f"Failed to initialize KuCoin client: {e}")
-        market_client = None
-else:
-    print("KuCoin API credentials not found")
+        print("✅ KuCoin client initialized successfully")
+        
+        # Test connection
+        try:
+            ticker = market_client.get_ticker('BTC-USDT')
+            if ticker:
+                print("✅ KuCoin connection verified")
+            else:
+                print("⚠️ KuCoin test returned no data")
+        except Exception as e:
+            print(f"⚠️ KuCoin test failed: {e}")
+            
+    else:
+        if not KUCOIN_AVAILABLE:
+            print("❌ KuCoin library not available")
+        else:
+            print("❌ KuCoin API credentials missing")
+            
+except Exception as e:
+    print(f"❌ KuCoin client initialization failed: {e}")
     market_client = None
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -68,6 +86,51 @@ bot = Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN and CHAT_ID else None
 # Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("quantum_bot_v3")
+
+# ============ FIXED DATA FETCHING =================
+async def fetch_kucoin_candles(symbol: str, tf: str = "1h", limit: int = 200):
+    """Fetch candles from KuCoin - COMPATIBLE WITH 2.2.0"""
+    if market_client is None:
+        logger.error(f"❌ KuCoin client not available for {symbol}")
+        return pd.DataFrame()
+        
+    interval_map = {"1h": "1hour", "4h": "4hour", "1d": "1day", "1w": "1week", "15m": "15min"}
+    interval = interval_map.get(tf, "1hour")
+    
+    try:
+        # Use get_kline_data for python-kucoin 2.2.0
+        candles = market_client.get_kline_data(symbol, interval, limit=limit)
+        
+        if not candles:
+            logger.error(f"❌ No data returned for {symbol}")
+            return pd.DataFrame()
+        
+        # KuCoin returns: [timestamp, open, close, high, low, volume, turnover]
+        df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
+        
+        # Convert to numeric types
+        for col in ["open", "close", "high", "low", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        # Remove invalid data
+        df = df.dropna(subset=["close", "volume"])
+        
+        if df.empty:
+            logger.error(f"❌ No valid data for {symbol}")
+            return pd.DataFrame()
+        
+        # Convert timestamp
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit='s', errors='coerce')
+        
+        # Sort by timestamp
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        
+        logger.info(f"✅ Fetched {len(df)} candles for {symbol}. Last price: {df['close'].iloc[-1]:.4f}")
+        return df[["timestamp", "open", "high", "low", "close", "volume"]]
+        
+    except Exception as e:
+        logger.error(f"❌ Error fetching {symbol}: {e}")
+        return pd.DataFrame()
 
 # ============ LIGHTWEIGHT DEEP LEARNING ============
 class LightweightDeepLearner:
@@ -543,6 +606,7 @@ class QuantumHybridBotV3:
         # Fetch data and basic indicators
         df = await self.fetch_data_with_indicators(symbol, "1h")
         if df.empty:
+            logger.warning(f"No data for {symbol}")
             return
         
         last_price = df['close'].iloc[-1]
@@ -720,7 +784,6 @@ class QuantumHybridBotV3:
             return df
         
         df = add_core_indicators(df)
-        df = add_enhanced_indicators(df)
         return df.dropna()
     
     def hybrid_price_targets(self, df, last_price):
@@ -769,74 +832,57 @@ def now_str():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 async def send_telegram(msg: str):
-    if not bot: return
+    if not bot: 
+        logger.warning("Telegram bot not available")
+        return
     try:
         await bot.send_message(chat_id=CHAT_ID, text=msg)
+        logger.info("Telegram message sent successfully")
     except Exception as e:
-        logger.error("Telegram error: %s", e)
+        logger.error(f"Telegram error: {e}")
 
 def smart_round(v: float):
     if v >= 1: return round(v, 2)
     if v >= 0.01: return round(v, 4)
     return round(v, 6)
 
-async def fetch_kucoin_candles(symbol: str, tf: str = "1h", limit: int = 200):
-    """Fetch candles from KuCoin"""
-    if not market_client:
-        logger.error("KuCoin client not initialized")
-        return pd.DataFrame()
-        
-    interval_map = {"1h":"1hour","4h":"4hour","1d":"1day"}
-    interval = interval_map.get(tf, "1hour")
-    loop = asyncio.get_running_loop()
-    try:
-        candles = await loop.run_in_executor(None, lambda: market_client.get_kline(symbol, interval, limit=limit))
-        if not candles: return pd.DataFrame()
-        df = pd.DataFrame(candles, columns=["timestamp","open","close","high","low","volume","turnover"])
-        for c in ["open","close","high","low","volume"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        df = df.dropna(subset=["close","volume"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
-        return df.sort_values("timestamp").reset_index(drop=True)[["timestamp","open","high","low","close","volume"]]
-    except Exception as e:
-        logger.error("Fetch error %s: %s", symbol, e)
-        return pd.DataFrame()
-
 def add_core_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Add core technical indicators"""
     if df.empty: return df
     df = df.copy()
     
-    # EMAs
-    for span in [9, 21, 50, 200]:
-        df[f"EMA_{span}"] = df["close"].ewm(span=span).mean()
+    try:
+        # EMAs
+        for span in [9, 21, 50, 200]:
+            df[f"EMA_{span}"] = df["close"].ewm(span=span).mean()
+        
+        # RSI
+        delta = df["close"].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df["RSI"] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        exp1 = df["close"].ewm(span=12).mean()
+        exp2 = df["close"].ewm(span=26).mean()
+        df["MACD"] = exp1 - exp2
+        df["MACD_signal"] = df["MACD"].ewm(span=9).mean()
+        df["MACD_hist"] = df["MACD"] - df["MACD_signal"]
+        
+        # ATR
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        true_range = np.max(np.column_stack([high_low, high_close, low_close]), axis=1)
+        df["ATR"] = true_range.rolling(14).mean()
+        
+        # Fill NaN values
+        df = df.ffill().bfill()
+        
+    except Exception as e:
+        logger.error(f"Error calculating indicators: {e}")
     
-    # RSI
-    delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df["RSI"] = 100 - (100 / (1 + rs))
-    
-    # MACD
-    exp1 = df["close"].ewm(span=12).mean()
-    exp2 = df["close"].ewm(span=26).mean()
-    df["MACD"] = exp1 - exp2
-    df["MACD_signal"] = df["MACD"].ewm(span=9).mean()
-    df["MACD_hist"] = df["MACD"] - df["MACD_signal"]
-    
-    # ATR
-    high_low = df['high'] - df['low']
-    high_close = np.abs(df['high'] - df['close'].shift())
-    low_close = np.abs(df['low'] - df['close'].shift())
-    true_range = np.max(np.column_stack([high_low, high_close, low_close]), axis=1)
-    df["ATR"] = true_range.rolling(14).mean()
-    
-    return df
-
-def add_enhanced_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Add enhanced indicators"""
-    # Add any additional indicators here
     return df
 
 # ============ MAIN EXECUTION ============
@@ -844,35 +890,55 @@ bot_v3 = QuantumHybridBotV3()
 
 async def main_loop():
     """Main execution loop"""
-    logger.info("Starting Quantum Hybrid Bot v3.0...")
+    logger.info("🚀 Starting Quantum Hybrid Bot v3.0...")
     
     # Check if KuCoin client is available
     if not market_client:
-        logger.error("KuCoin client not available. Check API credentials.")
+        logger.error("❌ KuCoin client not available. Check API credentials.")
         return
     
+    # Test data fetching
+    logger.info("🔍 Testing data fetching...")
+    test_symbol = "BTC-USDT"
+    test_df = await fetch_kucoin_candles(test_symbol, "1h", 10)
+    if test_df.empty:
+        logger.error("❌ Data fetching test failed")
+        return
+    else:
+        logger.info(f"✅ Data fetching test passed: {len(test_df)} candles")
+    
     # Initial training for DL models
-    logger.info("Initializing DL models...")
+    logger.info("🧠 Initializing DL models...")
+    successful_models = 0
     for sym in TOKENS:
         symbol = sym + "-USDT"
-        df = await fetch_kucoin_candles(symbol, "1h", 500)
+        df = await fetch_kucoin_candles(symbol, "1h", 100)  # Reduced for speed
         if not df.empty:
             df = add_core_indicators(df)
             bot_v3.light_dl.train_model(df, sym)
+            successful_models += 1
+            logger.info(f"✅ DL model trained for {sym}")
+        else:
+            logger.warning(f"❌ No data for {sym}")
     
-    logger.info("Starting main analysis loop...")
+    logger.info(f"✅ DL models initialized: {successful_models}/{len(TOKENS)}")
+    logger.info("🔄 Starting main analysis loop...")
+    
     while True:
         try:
             tasks = [bot_v3.analyze_symbol(sym + "-USDT") for sym in TOKENS]
             await asyncio.gather(*tasks)
+            logger.info(f"💤 Cycle completed. Waiting 5 minutes... ({datetime.utcnow().strftime('%H:%M:%S')})")
             await asyncio.sleep(300)  # 5 minutes
             
         except Exception as e:
-            logger.error(f"Main loop error: {e}")
+            logger.error(f"❌ Main loop error: {e}")
             await asyncio.sleep(60)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        logger.info("Shutting down Quantum Hybrid Bot v3.0")
+        logger.info("🛑 Shutting down Quantum Hybrid Bot v3.0")
+    except Exception as e:
+        logger.error(f"💥 Fatal error: {e}")
