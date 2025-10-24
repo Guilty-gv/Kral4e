@@ -20,6 +20,16 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from scipy.optimize import differential_evolution
 
+# Поправка за kucoin import
+try:
+    # Прво пробај нов начин
+    from kucoin.client import Client as Market
+except ImportError:
+    try:
+        # Пробaj стар начин
+        from kucoin.client import Market
+    except ImportError:
+        raise ImportError("Cannot import from kucoin.client")
 # ============ CONFIGURATION ============
 TOKENS = ["BTC","ETH","ONDO","XRP","LINK","FET","W","ACH","WAXL","HBAR"]
 MAX_OHLCV = 500
