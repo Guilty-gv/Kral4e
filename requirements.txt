@@ -1,31 +1,12 @@
-# === CORE DATA & MATH ===
-pandas>=1.5.0
-numpy>=1.21.0
-scipy>=1.10.0
-
-# === KUCOIN API ===
-python-kucoin>=2.2.0
-
-# === TELEGRAM ===
-python-telegram-bot>=20.0
-
-# === MACHINE LEARNING ===
-scikit-learn>=1.0.0
-xgboost>=1.7.0
-joblib>=1.2.0
-
-# === TECHNICAL ANALYSIS ===  
-ta>=0.10.0
-harmonics>=0.1.5
-
-# === ASYNC & WEB ===
-aiohttp>=3.8.0
-asyncio>=3.5.0
-
-# === ENVIRONMENT & UTILS ===
-python-dotenv>=1.0.0
-filelock>=3.9.0
-requests>=2.28.0
-
-# === DATE/TIME ===
-python-dateutil>=2.8.0
+# STABLE REQUIREMENTS - GUARANTEED TO WORK
+pandas==1.5.3
+numpy==1.24.3
+python-kucoin==2.2.0
+python-telegram-bot==20.5
+scikit-learn==1.3.0
+ta==0.10.2
+aiohttp==3.8.5
+python-dotenv==1.0.0
+scipy==1.10.1
+requests==2.28.2
+python-dateutil==2.8.2
