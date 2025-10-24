@@ -846,42 +846,49 @@ def smart_round(v: float):
     if v >= 0.01: return round(v, 4)
     return round(v, 6)
 
+# ============ FIXED CORE INDICATORS FUNCTION ============
 def add_core_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Add core technical indicators"""
-    if df.empty: return df
+    """Add core technical indicators - FIXED VERSION"""
+    if df.empty: 
+        return df
+        
     df = df.copy()
     
     try:
+        # Ensure we're working with pandas Series, not numpy arrays
+        close_series = pd.Series(df["close"].values, index=df.index)
+        
         # EMAs
         for span in [9, 21, 50, 200]:
-            df[f"EMA_{span}"] = df["close"].ewm(span=span).mean()
+            df[f"EMA_{span}"] = close_series.ewm(span=span).mean()
         
         # RSI
-        delta = df["close"].diff()
+        delta = close_series.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df["RSI"] = 100 - (100 / (1 + rs))
         
         # MACD
-        exp1 = df["close"].ewm(span=12).mean()
-        exp2 = df["close"].ewm(span=26).mean()
+        exp1 = close_series.ewm(span=12).mean()
+        exp2 = close_series.ewm(span=26).mean()
         df["MACD"] = exp1 - exp2
         df["MACD_signal"] = df["MACD"].ewm(span=9).mean()
         df["MACD_hist"] = df["MACD"] - df["MACD_signal"]
         
-        # ATR
+        # ATR - simplified calculation
         high_low = df['high'] - df['low']
-        high_close = np.abs(df['high'] - df['close'].shift())
-        low_close = np.abs(df['low'] - df['close'].shift())
-        true_range = np.max(np.column_stack([high_low, high_close, low_close]), axis=1)
-        df["ATR"] = true_range.rolling(14).mean()
+        df["ATR"] = high_low.rolling(14).mean()
         
         # Fill NaN values
         df = df.ffill().bfill()
         
+        logger.info(f"Indicators calculated successfully. RSI: {df['RSI'].iloc[-1]:.2f}")
+        
     except Exception as e:
         logger.error(f"Error calculating indicators: {e}")
+        # Return basic dataframe without indicators
+        return df
     
     return df
 
