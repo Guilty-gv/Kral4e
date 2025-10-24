@@ -13,23 +13,21 @@ QUANTUM HYBRID BOT v3.0 - COMPLETE ENHANCED VERSION
 import os, asyncio, logging, math, random, json, aiohttp
 import pandas as pd, numpy as np
 from datetime import datetime, timedelta
-from kucoin.client import Market
+
+# KUCOIN IMPORT FIX
+try:
+    from kucoin.client import Client
+    market_client = None  # Ќе се иницијализира подоцна
+except ImportError as e:
+    print(f"KuCoin import error: {e}")
+    market_client = None
+
 from telegram import Bot
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from scipy.optimize import differential_evolution
 
-# Поправка за kucoin import
-try:
-    # Прво пробај нов начин
-    from kucoin.client import Client as Market
-except ImportError:
-    try:
-        # Пробaj стар начин
-        from kucoin.client import Market
-    except ImportError:
-        raise ImportError("Cannot import from kucoin.client")
 # ============ CONFIGURATION ============
 TOKENS = ["BTC","ETH","ONDO","XRP","LINK","FET","W","ACH","WAXL","HBAR"]
 MAX_OHLCV = 500
@@ -46,8 +44,21 @@ BASE_WEIGHTS = {
 KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
 KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
 KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
-market_client = Market(key=KUCOIN_API_KEY, secret=KUCOIN_API_SECRET, passphrase=KUCOIN_API_PASSPHRASE) \
-    if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE else Market()
+
+# Initialize market client
+if KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE:
+    try:
+        market_client = Client(
+            api_key=KUCOIN_API_KEY,
+            api_secret=KUCOIN_API_SECRET,
+            api_passphrase=KUCOIN_API_PASSPHRASE
+        )
+    except Exception as e:
+        print(f"Failed to initialize KuCoin client: {e}")
+        market_client = None
+else:
+    print("KuCoin API credentials not found")
+    market_client = None
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -770,6 +781,10 @@ def smart_round(v: float):
 
 async def fetch_kucoin_candles(symbol: str, tf: str = "1h", limit: int = 200):
     """Fetch candles from KuCoin"""
+    if not market_client:
+        logger.error("KuCoin client not initialized")
+        return pd.DataFrame()
+        
     interval_map = {"1h":"1hour","4h":"4hour","1d":"1day"}
     interval = interval_map.get(tf, "1hour")
     loop = asyncio.get_running_loop()
@@ -829,6 +844,11 @@ bot_v3 = QuantumHybridBotV3()
 async def main_loop():
     """Main execution loop"""
     logger.info("Starting Quantum Hybrid Bot v3.0...")
+    
+    # Check if KuCoin client is available
+    if not market_client:
+        logger.error("KuCoin client not available. Check API credentials.")
+        return
     
     # Initial training for DL models
     logger.info("Initializing DL models...")
